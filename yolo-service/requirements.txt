@@ -1,0 +1,13 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+python-dotenv==1.0.1
+pillow==11.1.0
+
+# Vision model — Ultralytics YOLO11 (detect + segment). This is the one
+# dependency that forces this microservice to be Python — see app.py's
+# module docstring.
+#
+# First run will auto-download the stock COCO-pretrained checkpoint
+# (e.g. yolo11l-seg.pt) if no fine-tuned weights are configured yet.
+ultralytics==8.3.55

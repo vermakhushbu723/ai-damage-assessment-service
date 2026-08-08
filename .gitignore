@@ -1,0 +1,31 @@
+# Node service (server/)
+server/node_modules/
+server/.env
+server/*.db
+server/*.db-shm
+server/*.db-wal
+server/uploads/
+
+# Python YOLO microservice (yolo-service/) and training/
+yolo-service/.venv/
+yolo-service/__pycache__/
+yolo-service/.env
+training/.venv/
+training/__pycache__/
+training/data/*/.data.resolved.yaml
+training/runs/
+training/raw_pool/
+training/data/*/labels/*.cache
+*.pt
+
+# Training venv created per training/README.md ("python -m venv .venv-training"
+# at the service root) -- separate from yolo-service/.venv, holds torch +
+# ultralytics (large, machine-specific, never commit).
+.venv-training/
+
+# Anything else Python/Node leave lying around
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+Thumbs.db

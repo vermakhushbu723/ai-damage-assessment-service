@@ -1,0 +1,10 @@
+path: .
+train: images/train
+val: images/val
+names:
+  0: dent
+  1: scratch
+  2: crack
+  3: shatter
+  4: deformation
+  5: tear

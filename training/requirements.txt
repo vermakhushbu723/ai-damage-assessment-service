@@ -1,0 +1,9 @@
+# Python deps for training/scripts/*.py only. The main API (server/) is
+# Node.js and needs none of this -- see ../README.md.
+#
+# Note: export_corrections_for_retraining.py reads the Node service's
+# SQLite file with the stdlib `sqlite3` module, so no DB driver is listed
+# here for it.
+
+ultralytics>=8.3.0     # YOLO11-seg training/validation (train.py)
+pyyaml>=6.0             # writes data.yaml (prepare_dataset.py)
