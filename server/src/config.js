@@ -8,7 +8,12 @@ export const settings = {
     port: Number(process.env.PORT || 8000),
     yoloServiceUrl: process.env.YOLO_SERVICE_URL || 'http://localhost:8001',
     ollamaHost: process.env.OLLAMA_HOST || 'http://localhost:11434',
-    ollamaModel: process.env.OLLAMA_MODEL || 'llama3.1:8b',
+    // Client spec names llama3.1:8b; defaulting to the lighter llama3.2:3b
+    // here instead -- report narration is zero-shot prompted (no
+    // fine-tuning yet, see docs/ARCHITECTURE.md Section 5.2/9), and 3B is
+    // far friendlier on a CPU-only/offline machine. Override back to
+    // llama3.1:8b if you want the spec-exact model and have the resources.
+    ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2:3b',
     ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_SECONDS || 60) * 1000,
     databaseFile: process.env.DATABASE_FILE || './ai_damage_assessment.db',
     uploadDir: process.env.UPLOAD_DIR || './uploads',

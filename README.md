@@ -1,14 +1,18 @@
 # AI Damage Assessment Service
 
-YOLO11-seg damage detection + rule-based cost/severity engine + Llama-generated ILA report
+YOLOv8-seg damage detection + rule-based cost/severity engine + Llama-generated ILA report
 narrative, feeding the "AI ILA" flow in `car-damage-insurance-web-app`'s admin console.
+
+> Uses **YOLOv8-seg**, not the YOLOv11 named in the client's original spec — same `ultralytics`
+> package either way, just a different checkpoint. Chosen for maturity/CPU stability; see
+> `yolo-service/app.py`'s module docstring and `docs/ARCHITECTURE.md`.
 
 **This is two services**, not one:
 
 | | | Language | You'll edit this... |
 |---|---|---|---|
 | [`server/`](server/) | Main API — REST routes, database, cost engine, cause-check, corrections queue, Llama calls | **Node.js/Express** | ...often. This is where almost all day-to-day work happens. |
-| [`yolo-service/`](yolo-service/) | YOLO11 inference only — one endpoint | Python (unavoidable — see below) | ...rarely, once it's running. |
+| [`yolo-service/`](yolo-service/) | YOLOv8 inference only — one endpoint | Python (unavoidable — see below) | ...rarely, once it's running. |
 
 **Why two services / why Python at all**: Ultralytics YOLO (the vision model) only has a Python
 runtime — there's no Node.js equivalent for training or running it. Everything else (the REST
@@ -26,6 +30,10 @@ sample dataset, the fine-tune command, and the correction → retraining loop en
 
 **Just want to test what's built so far?** See [`TESTING.md`](TESTING.md) — a no-Python-needed
 quick test using mock data, plus the full step-by-step for running both real services.
+
+**Ready to put this on a real server?** See [`DEPLOYMENT.md`](DEPLOYMENT.md) — step-by-step VPS
+setup (Node.js, Python, ports/firewall, nginx + HTTPS, `pm2`) for `server/` + `yolo-service/`.
+Training itself doesn't happen on that VPS — see its "Ongoing maintenance" section.
 
 ## What's real vs. placeholder right now
 
@@ -69,7 +77,7 @@ cp .env.example .env
 uvicorn app:app --reload --port 8001
 ```
 
-The first request will auto-download the stock `yolo11l-seg.pt` checkpoint (~50MB) via
+The first request will auto-download the stock `yolov8s-seg.pt` checkpoint via
 `ultralytics` — needs internet access once, then it's cached locally. `server/.env`'s
 `YOLO_SERVICE_URL` (default `http://localhost:8001`) is how the Node service finds this.
 
@@ -123,7 +131,7 @@ server/                         Node.js/Express — the main service
     schemas/
       constants.js, validation.js  Zod request validation + fixed label sets
 
-yolo-service/                   Python — YOLO11 inference ONLY
+yolo-service/                   Python — YOLOv8 inference ONLY
   app.py                         FastAPI wrapper, single /detect endpoint
   requirements.txt
 

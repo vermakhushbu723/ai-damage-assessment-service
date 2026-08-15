@@ -32,7 +32,7 @@ db.exec(`
     -- One row = one handler correction to an AI output. This *is* the
     -- retraining queue described in docs/ARCHITECTURE.md -- a scheduled job
     -- reads unconsumed rows here, exports them into the annotation format
-    -- YOLO11 fine-tuning expects, and kicks off a training run once the
+    -- YOLOv8 fine-tuning expects, and kicks off a training run once the
     -- volume threshold (settings.retrainVolumeThreshold) is hit.
     CREATE TABLE IF NOT EXISTS corrections (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

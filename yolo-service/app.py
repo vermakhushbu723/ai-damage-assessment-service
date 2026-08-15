@@ -1,4 +1,13 @@
-"""Minimal YOLO11-seg inference microservice.
+"""Minimal YOLOv8-seg inference microservice.
+
+Uses YOLOv8-seg rather than the newer YOLO11-seg -- same `ultralytics`
+package/API either way (just a different checkpoint name), chosen for
+YOLOv8's maturity/stability and CPU-friendliness on this project's
+offline/on-prem deployment target (better docs, huge community, more
+predictable CPU training behavior) over YOLO11's marginally newer
+architecture. This is a deliberate deviation from the client's original
+spec, which named YOLOv11 -- see docs/ARCHITECTURE.md's data schema
+section for the reasoning; flag it to the client before going live.
 
 This is the ONLY Python you need to run/maintain for the AI ILA backend.
 Everything else -- the REST API, database, cost engine, cause-check,
@@ -39,9 +48,9 @@ _COCO_VEHICLE_CLASS_NAMES = {"car", "truck", "bus", "motorcycle", "bicycle"}
 _DAMAGE_TYPES = {"dent", "scratch", "crack", "shatter", "deformation", "tear", "unknown"}
 
 _WEIGHTS_BY_VEHICLE_TYPE = {
-    "car": os.getenv("YOLO_CAR_WEIGHTS", "yolo11l-seg.pt"),
-    "two_wheeler": os.getenv("YOLO_TWO_WHEELER_WEIGHTS", "yolo11l-seg.pt"),
-    "commercial_vehicle": os.getenv("YOLO_CV_WEIGHTS", "yolo11l-seg.pt"),
+    "car": os.getenv("YOLO_CAR_WEIGHTS", "yolov8n-seg.pt"),
+    "two_wheeler": os.getenv("YOLO_TWO_WHEELER_WEIGHTS", "yolov8n-seg.pt"),
+    "commercial_vehicle": os.getenv("YOLO_CV_WEIGHTS", "yolov8n-seg.pt"),
 }
 _CONF_THRESHOLD = float(os.getenv("YOLO_CONF_THRESHOLD", "0.25"))
 
@@ -50,7 +59,7 @@ _lock = Lock()
 
 
 def _is_placeholder_checkpoint(weights_path: str) -> bool:
-    # Stock Ultralytics checkpoint filenames look like "yolo11l-seg.pt" with
+    # Stock Ultralytics checkpoint filenames look like "yolov8s-seg.pt" with
     # no directory -- a fine-tuned checkpoint will be a path into your own
     # training output (e.g. "runs/segment/car_v3/weights/best.pt").
     return Path(weights_path).parent == Path(".")
@@ -72,7 +81,7 @@ def _get_model(vehicle_type: str):
             ) from exc
 
         weights_path = _WEIGHTS_BY_VEHICLE_TYPE[vehicle_type]
-        logger.info("Loading YOLO11 checkpoint for %s: %s", vehicle_type, weights_path)
+        logger.info("Loading YOLOv8 checkpoint for %s: %s", vehicle_type, weights_path)
         try:
             model = YOLO(weights_path)
         except Exception as exc:  # noqa: BLE001 - surface as a clean API error

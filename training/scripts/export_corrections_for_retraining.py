@@ -1,5 +1,5 @@
 """Turns handler corrections logged via POST /api/v1/corrections into new
-YOLO11 training samples — this is what makes docs/ARCHITECTURE.md Section 5
+YOLOv8 training samples — this is what makes docs/ARCHITECTURE.md Section 5
 ("every claim your team processes after go-live is additional, real,
 correctly-labelled training data") actually happen, rather than just being
 a queue that sits there.

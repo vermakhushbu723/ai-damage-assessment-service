@@ -1,16 +1,22 @@
 # Training pipeline: photos → annotations → trained model → retraining loop
 
 This is the concrete, working version of docs/ARCHITECTURE.md Sections 2 and 5 — annotate real
-photos, turn them into a YOLO11-seg training set, fine-tune, and keep improving from handler
+photos, turn them into a YOLOv8-seg training set, fine-tune, and keep improving from handler
 corrections. A tiny illustrative sample dataset is included so every step below runs today,
 before you have real annotated photos.
+
+> **Note:** the client's original spec (and docs/ARCHITECTURE.md's data-schema section) names
+> YOLOv11. This project uses **YOLOv8-seg** instead — same `ultralytics` package/API, just a
+> different checkpoint name — chosen for its maturity, documentation, and (per hands-on testing)
+> more predictable CPU training behavior. Flag this to the client before going live; swapping
+> back to a YOLO11 checkpoint later is a one-line change (`--base yolo11l-seg.pt` etc.) if needed.
 
 ## The full loop, end to end
 
 ```
  ┌─────────────────┐   ┌───────────────────┐   ┌──────────────────┐   ┌─────────────┐
  │ Annotation       │   │ prepare_dataset.py │   │     train.py     │   │  Deploy /   │
- │ Studio (web UI)  │──▶│ (stratified split) │──▶│ (YOLO11-seg      │──▶│  shadow-mode│
+ │ Studio (web UI)  │──▶│ (stratified split) │──▶│ (YOLOv8-seg      │──▶│  shadow-mode│
  │ draw + export    │   │                    │   │  fine-tune)      │   │  validate   │
  └─────────────────┘   └───────────────────┘   └──────────────────┘   └──────┬──────┘
                                                                                │
@@ -96,33 +102,36 @@ so you can see the exact file format and run the training command below without 
 not produce a model that detects real damage. Replace it with your own annotated photos via
 Step 1 as soon as you have them.
 
-## Step 4 — Fine-tune YOLO11-seg
+## Step 4 — Fine-tune YOLOv8-seg
 
 ```bash
 cd ai-damage-assessment-service
 python -m venv .venv-training                 # separate from yolo-service/.venv, same idea
 .venv-training\Scripts\activate                # Windows; `source .venv-training/bin/activate` on Mac/Linux
 pip install -r training/requirements.txt
-python training/scripts/train.py --vehicle-type car --base yolo11n-seg.pt --epochs 150 --device cpu
+python training/scripts/train.py --vehicle-type car --base yolov8n-seg.pt --epochs 150 --device cpu
 ```
 
-`--base yolo11n-seg.pt` (nano) auto-downloads the stock COCO-pretrained checkpoint the first
+`--base yolov8n-seg.pt` (nano) auto-downloads the stock COCO-pretrained checkpoint the first
 time. This kicks off a `yolo segment train` run (1280px image size, early-stop patience 25) —
 with this repo's tiny sample set it'll run in a couple of minutes on CPU and produce a
 (not-yet-useful, sample-data-sized) checkpoint at
 `training/runs/segment/car_finetune/weights/best.pt`, which is exactly what you'd point a real
-run's larger dataset at too.
+run's larger dataset at too. For a real fine-tune, `--base yolov8s-seg.pt` (small, the project's
+default) is a better accuracy/speed tradeoff — see the CPU warning below before picking anything
+bigger.
 
-> **⚠ CPU + `yolo11l-seg.pt` (large — the checkpoint Section 2.2 specifies) will likely crash.**
-> Found while testing the web UI's "Start Training" button: the large checkpoint at the default
+> **⚠ CPU + a large base checkpoint (e.g. `yolov8m-seg.pt`/`yolov8l-seg.pt`, or the `yolo11l-seg.pt`
+> this project used before switching to YOLOv8) will likely crash.**
+> Found while testing the web UI's "Start Training" button: a large checkpoint at the default
 > `batch=16`/`imgsz=1280` reliably crashes with an out-of-memory access violation (exit code
 > `3221225477` / `0xC0000005` on Windows, no Python traceback — the crash happens inside
 > OpenCV/PyTorch native code during the first batch, below where Python could catch it) on a
 > 16GB CPU-only machine. **Fix: add `--batch 2`** (or however low your RAM needs). The web UI's
 > "Start Training" button already defaults to `batch=2` on CPU automatically — this only matters
-> if you're running `train.py` by hand. The large checkpoint is really meant for a GPU (see
-> `docs/ARCHITECTURE.md` Section 8) — CPU is fine for proving the pipeline works (nano
-> checkpoint), not for a real fine-tune.
+> if you're running `train.py` by hand. A big checkpoint is really meant for a GPU (see
+> `docs/ARCHITECTURE.md` Section 8) — CPU is fine for proving the pipeline works (nano/small
+> checkpoint), not for a real fine-tune with the larger variants.
 
 Validate any checkpoint against a vehicle type's held-out set:
 ```bash

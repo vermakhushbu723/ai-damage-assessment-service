@@ -78,15 +78,17 @@ function readTrainingReport(runDir) {
 const startTrainingSchema = z.object({
     vehicle_type: z.enum(VEHICLE_TYPES),
     epochs: z.number().int().positive().max(1000).default(100),
-    base: z.string().min(1).default('yolo11l-seg.pt'),
+    base: z.string().min(1).default('yolov8s-seg.pt'), // YOLOv8-seg, not YOLO11 -- see yolo-service/app.py's module docstring for why
     device: z.string().min(1).default('cpu'), // 'cpu' or '0' (first GPU)
-    // Found by crashing a lot: yolo11l-seg.pt (large) at the default
+    // Found by crashing a lot: a large base checkpoint (yolo11l-seg.pt, the
+    // one we were using before switching to YOLOv8) at the default
     // batch=16/imgsz=1280 reliably segfaults (exit 0xC0000005) on a 16GB
     // CPU-only machine -- it's a memory-exhaustion crash during the first
     // batch's mosaic augmentation + forward pass, not a code bug, and it
     // gives no Python traceback since the OOM happens inside OpenCV/torch
     // native code. batch=2 fixed it in testing. Default low on CPU;
-    // GPUs have far more headroom so default higher there.
+    // GPUs have far more headroom so default higher there. Kept as a safety
+    // net even after moving to the lighter yolov8s-seg default.
     batch: z.number().int().positive().max(256).optional(),
 });
 
@@ -193,7 +195,7 @@ async function runTrainingJob({ vehicleType, epochs, base, device, batch }) {
             if (trainCode === 3221225477 && device === 'cpu') {
                 job.error += ' This looks like the known CPU memory crash (large checkpoint + batch too high for available ' +
                     `RAM) -- it crashed with batch=${batch}. Try again with a smaller batch (e.g. 1-2), a smaller base ` +
-                    "checkpoint (yolo11n-seg.pt), or on a GPU. See training/README.md's CPU troubleshooting note.";
+                    "checkpoint (yolov8n-seg.pt), or on a GPU. See training/README.md's CPU troubleshooting note.";
             }
         } else {
             job.status = 'completed';

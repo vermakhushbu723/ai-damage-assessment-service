@@ -1,8 +1,10 @@
-"""Fine-tunes YOLO11-seg for one vehicle type — Section 2.2 of
-docs/ARCHITECTURE.md.
+"""Fine-tunes YOLOv8-seg for one vehicle type — Section 2.2 of
+docs/ARCHITECTURE.md (which specs YOLOv11; this project deliberately uses
+YOLOv8 instead for its maturity/CPU stability -- see yolo-service/app.py's
+module docstring).
 
 First run (no prior fine-tuned checkpoint yet):
-    python train.py --vehicle-type car --base yolo11l-seg.pt --epochs 150
+    python train.py --vehicle-type car --base yolov8s-seg.pt --epochs 150
 
 Later runs — continual fine-tuning from your last checkpoint on top of
 newly corrected data prepared via prepare_dataset.py or
@@ -58,7 +60,7 @@ def _resolve_data_yaml(vehicle_type: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--vehicle-type", choices=["car", "two_wheeler", "commercial_vehicle"], required=True)
-    parser.add_argument("--base", default="yolo11l-seg.pt", help="Base checkpoint: stock or a prior fine-tune's best.pt")
+    parser.add_argument("--base", default="yolov8s-seg.pt", help="Base checkpoint: stock or a prior fine-tune's best.pt")
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--imgsz", type=int, default=1280, help="Higher than the 640 default -- damage regions are often small relative to the whole vehicle.")
     parser.add_argument("--batch", type=int, default=16, help="Lower this (e.g. 2-4) on CPU with a large/big base checkpoint -- see training/README.md's CPU troubleshooting note.")

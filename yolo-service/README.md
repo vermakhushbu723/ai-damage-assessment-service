@@ -1,8 +1,10 @@
 # YOLO Inference Service
 
 The **only** Python you need to run for the AI ILA backend. Wraps Ultralytics
-YOLO11-seg behind one endpoint (`POST /detect`) — no database, no cost logic,
-no report generation. Everything else lives in `../server` (Node.js/Express).
+YOLOv8-seg (chosen over the newer YOLO11 for maturity/CPU stability — see
+`app.py`'s module docstring) behind one endpoint (`POST /detect`) — no
+database, no cost logic, no report generation. Everything else lives in
+`../server` (Node.js/Express).
 
 See `../docs/ARCHITECTURE.md` Section 8 for why YOLO specifically has to stay
 in Python (Ultralytics has no Node.js equivalent for training or inference).
@@ -19,8 +21,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-The first request will auto-download the stock `yolo11l-seg.pt` checkpoint
-(~50MB) via `ultralytics` — needs internet access once, then it's cached.
+The first request will auto-download the stock `yolov8s-seg.pt` checkpoint
+via `ultralytics` — needs internet access once, then it's cached.
 
 ## Run
 

@@ -1,10 +1,10 @@
 # How to test the AI ILA screen
 
 Two tracks: a **quick test that needs nothing installed** (works right now, on your laptop, no
-Python), and a **full test** with the real YOLO11 + Llama backend running.
+Python), and a **full test** with the real YOLOv8 + Llama backend running.
 
 This backend is **two services** — see [`README.md`](README.md) for why: a Node.js/Express API
-(`server/`, no Python needed) and a small Python microservice that only does YOLO11 inference
+(`server/`, no Python needed) and a small Python microservice that only does YOLOv8 inference
 (`yolo-service/`). Track 2 below starts both.
 
 ## Track 1 — Quick test, no Python needed (do this first)
@@ -47,7 +47,7 @@ bug in the frontend, independent of Python/YOLO/Llama — report exactly what yo
 
 ## Track 2 — Full test, with the real AI service
 
-This actually runs a photo through YOLO11 and (optionally) generates a report via Llama. It needs
+This actually runs a photo through YOLOv8 and (optionally) generates a report via Llama. It needs
 **two terminals running at once** — the Node API and the Python YOLO service — plus a third for
 the web app.
 
@@ -91,7 +91,7 @@ copy .env.example .env            # Windows; `cp` on Mac/Linux
 uvicorn app:app --reload --port 8001
 ```
 
-- First run downloads the stock YOLO11 checkpoint (~50MB, needs internet once).
+- First run downloads the stock YOLOv8 checkpoint (~50MB, needs internet once).
 - Leave this terminal running. Open **http://localhost:8001/health** — if it responds, the
   service is up. `server/.env`'s `YOLO_SERVICE_URL` (default `http://localhost:8001`) is how the
   Node API finds it — nothing to change if you used the defaults above.
@@ -105,7 +105,7 @@ npm run dev
 ```
 Open the app, go to AI ILA, upload a real photo, fill in the claim/vehicle fields, and click
 **"Run AI Assessment"**. You should see:
-- A **yellow banner**: "Running on the stock YOLO11 checkpoint..." — expected, since there's no
+- A **yellow banner**: "Running on the stock YOLOv8 checkpoint..." — expected, since there's no
   fine-tuned damage-detection model yet (that needs your own annotated photos, see
   `training/README.md`). The detection itself will just outline "a vehicle," not real damage —
   this step is proving the *pipeline* works end to end, not that damage detection is accurate yet.

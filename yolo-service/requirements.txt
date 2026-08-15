@@ -4,10 +4,10 @@ python-multipart==0.0.20
 python-dotenv==1.0.1
 pillow==11.1.0
 
-# Vision model — Ultralytics YOLO11 (detect + segment). This is the one
-# dependency that forces this microservice to be Python — see app.py's
-# module docstring.
+# Vision model — Ultralytics (detect + segment), used here to run YOLOv8-seg
+# (see app.py's module docstring for why v8 over the newer YOLO11). This is
+# the one dependency that forces this microservice to be Python.
 #
 # First run will auto-download the stock COCO-pretrained checkpoint
-# (e.g. yolo11l-seg.pt) if no fine-tuned weights are configured yet.
+# (e.g. yolov8s-seg.pt) if no fine-tuned weights are configured yet.
 ultralytics==8.3.55

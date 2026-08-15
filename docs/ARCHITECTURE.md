@@ -18,9 +18,9 @@ Survey Photos + Claim Metadata (cause of loss, vehicle details, policy info)
  │
  ▼
 ┌─────────────────────────┐
-│ STAGE 1: Vision Model    │  YOLOv11 (Ultralytics, open weights)
-│ Damage Detection         │  → detects part + damage type + severity
-│ & Localization            │  per photo, with bounding boxes
+│ STAGE 1: Vision Model    │  YOLOv8-seg (Ultralytics, open weights) —
+│ Damage Detection         │  client spec named YOLOv11; this repo uses
+│ & Localization            │  YOLOv8 instead, see note below the diagram
 └─────────────────────────┘
  │ (structured damage JSON)
  ▼
@@ -40,6 +40,16 @@ Survey Photos + Claim Metadata (cause of loss, vehicle details, policy info)
  Diff (AI draft vs Handler final) → stored as new training example
 ```
 
+> **⚠ Deviation from the client's original spec: YOLOv8-seg, not YOLOv11.** The client's
+> "AI ILA Model — Technical Specification" names YOLOv11. This repo uses **YOLOv8-seg**
+> instead — same `ultralytics` package/API, just a different pretrained checkpoint (`yolov8s-seg.pt`
+> vs `yolo11l-seg.pt`) — chosen for YOLOv8's greater maturity, more extensive documentation/
+> community support, and (found through hands-on testing on this project's CPU-only dev machine)
+> more predictable CPU training behavior; YOLO11's marginal architecture improvements over v8
+> matter less here than training stability does. **Flag this to the client for sign-off before
+> going live** — switching back to a YOLO11 checkpoint later is a one-line change (`--base
+> yolo11l-seg.pt`) if they'd rather stay spec-exact.
+
 **Why two models instead of one vision-language model (VLM):**
 - Bounding boxes/masks give a traceable, auditable record of which damage the AI saw — needed for
   insurance/fraud review.
@@ -50,7 +60,7 @@ Survey Photos + Claim Metadata (cause of loss, vehicle details, policy info)
 - (Later, once data volume is high, a VLM like Qwen2-VL/LLaVA can be evaluated as a v2 alternative
   — not needed for v1.)
 
-This split is also why **YOLO11 and Llama never share weights or joint training** — YOLO11's JSON
+This split is also why **YOLOv8 and Llama never share weights or joint training** — YOLOv8's JSON
 output becomes part of Llama's *input context* for the next step. You can improve, replace, or
 swap out either one independently without touching the other.
 
@@ -97,15 +107,15 @@ client doc) assumed a single Python FastAPI service end to end. In practice:
   logic with zero ML-framework dependency, and now lives entirely in `server/` (Node.js/Express).
   **You should almost never need to open `yolo-service/app.py`** once it's running; day-to-day
   work (new fields, new rules, new endpoints) happens in `server/`.
-- Training YOLO11 on your own annotated photos (Section 5) still requires Python + Ultralytics —
+- Training YOLOv8 on your own annotated photos (Section 5) still requires Python + Ultralytics —
   there's no way around that for *training* specifically — but that's a periodic batch job run
   from `training/`, not a service you maintain continuously.
 
 | Piece | Language | Where | Touches GPU? |
 |---|---|---|---|
 | Main API, DB, cost engine, cause-check, corrections queue | **Node.js/Express** | `server/` | No |
-| YOLO11 inference | Python (FastAPI wrapper, per client spec 4.3) | `yolo-service/` | Yes, at inference time |
-| YOLO11 fine-tuning | Python (Ultralytics CLI) | `training/` | Yes, at training time |
+| YOLOv8 inference | Python (FastAPI wrapper, per client spec 4.3 — spec names YOLOv11, this repo uses YOLOv8, see Section 1) | `yolo-service/` | Yes, at inference time |
+| YOLOv8 fine-tuning | Python (Ultralytics CLI) | `training/` | Yes, at training time |
 | Llama serving | Ollama/vLLM (not custom code) | wherever you install Ollama | Yes, at inference time |
 | Llama fine-tuning (LoRA/QLoRA) | Python (Hugging Face `transformers` + `peft`) | *not built yet — see Section 9, Phase 3* | Yes, at training time |
 
@@ -166,7 +176,7 @@ detection just consumes a `severity` string either way.
 schemas (`server/src/schemas/validation.js`) additionally support a full segmentation
 `mask_polygon` (list of points, not just a box) alongside the same `bbox` idea, and a derived
 `mask_area_ratio` — segmentation masks give a more precise damage-area estimate than a box, which
-matters for severity scoring. Use `-seg` (segmentation) YOLO11 checkpoints, not the plain
+matters for severity scoring. Use `-seg` (segmentation) YOLOv8 checkpoints, not the plain
 detection variant, to get masks; a bounding box is trivially derivable from a mask's min/max
 coordinates if you ever need one.
 
@@ -238,12 +248,15 @@ Llama is listed as improving quality, not as a hard prerequisite for the pipelin
 
 ## 5. Training pipeline
 
-### 5.1 Stage 1 — YOLOv11 damage detector
+### 5.1 Stage 1 — YOLOv8 damage detector
+
+(Client spec names YOLOv11 for this stage — see the deviation note in Section 1 for why this repo
+uses YOLOv8 instead.)
 
 - Framework: `ultralytics` Python package (`pip install`, runs offline once weights are downloaded
   once) — see `training/README.md` and `training/scripts/train.py` in this repo, already wired to
   this exact workflow.
-- Start from COCO-pretrained YOLOv11 weights (`yolo11l-seg.pt`, matching `yolo-service`'s default),
+- Start from COCO-pretrained YOLOv8 weights (`yolov8s-seg.pt`, matching `yolo-service`'s default),
   fine-tune on your annotated dataset.
 - Standard supervised (instance segmentation) training — no custom research needed, this is a
   well-trodden path.
@@ -315,18 +328,23 @@ anything.**
 
 ### 8.1 GPU sizing
 
-**One mid-range GPU with ≥24GB VRAM is enough for both** YOLOv11-seg fine-tuning and LLaMA-3.1-8B
+**One mid-range GPU with ≥24GB VRAM is enough for both** YOLOv8-seg fine-tuning and LLaMA-3.1-8B
 LoRA/QLoRA fine-tuning — you do not need separate GPUs for each model, and you do not need
 multiple GPUs at v1. Concretely:
-- Training YOLO11l-seg at `imgsz=1280` on a few thousand images: comfortably fits in 24GB.
+- Training YOLOv8s-seg at `imgsz=1280` on a few thousand images: comfortably fits in 24GB (YOLOv8's
+  smaller footprint than YOLO11 gives even more headroom than the original spec's sizing assumed).
 - LoRA/QLoRA fine-tuning an 8B-parameter Llama (4-bit quantized base + low-rank adapters, which is
   what QLoRA specifically means) needs roughly 8–12GB VRAM, not the 60GB+ full fine-tuning would
   need — this is the entire reason the spec calls out LoRA/QLoRA specifically rather than full
-  fine-tuning.
+  fine-tuning. **This repo doesn't fine-tune Llama at all yet** (see Section 5.2/Section 9) — report
+  narration runs zero-shot prompted against `llama3.2:3b` today, which is even lighter (see next
+  bullet) and needs no GPU training time. Fine-tuning is a v2 option if zero-shot quality plateaus.
 - **Inference** (production serving, not training) is much lighter than training for both models:
-  YOLO11-seg inference is well under 1GB VRAM per request; Llama-8B served via Ollama in its
-  default 4-bit quantization is roughly 5–6GB resident. Both can run concurrently on one 24GB card
-  with headroom to spare.
+  YOLOv8-seg inference is well under 1GB VRAM per request; Llama served via Ollama in 4-bit
+  quantization is roughly 5–6GB resident for the 8B spec model, or a couple GB for the lighter
+  `llama3.2:3b` this repo defaults to (chosen for CPU/offline friendliness — swap back to `llama3.1:8b`
+  in `server/.env`'s `OLLAMA_MODEL` if you want the spec-exact model and have the resources). Both
+  models can run concurrently on one 24GB card with headroom to spare either way.
 - Reasonable concrete options: a single **RTX 4090** (24GB, on-prem) or an **A10 (24GB)** /
   **A100 (40/80GB)** cloud instance. Anything at or above 24GB VRAM covers this v1 scope.
 
@@ -350,7 +368,7 @@ choice), but the timeline and budget differ substantially.
 - **`server/` (Node.js/Express)** needs **no GPU at all** — it's a plain REST API + SQLite
   database + business logic. Runs fine on the smallest/cheapest VM you have, or even alongside the
   GPU box if that's operationally simpler.
-- **`yolo-service/` (Python FastAPI wrapper around YOLO11)** needs GPU access at inference time —
+- **`yolo-service/` (Python FastAPI wrapper around YOLOv8)** needs GPU access at inference time —
   runs on the GPU box, one process, serving `POST /detect` to `server/` over an internal network
   call (never exposed to the internet or the browser directly).
 - **Ollama or vLLM** (Llama serving) also needs GPU access — can run on the same GPU box as
@@ -371,7 +389,7 @@ choice), but the timeline and budget differ substantially.
 | Phase | Scope | Status in this repo |
 |---|---|---|
 | 1 | Finalize label sets (parts/damage types/severity), set up CVAT, annotate first ~2,000 photos | **Not started** — reconcile `constants.js`'s damage-type list with Section 3.2 first |
-| 2 | Train & validate YOLOv11 damage detector; build inference API | **Scaffolded**: `yolo-service/` API is built and running on the stock COCO checkpoint (placeholder, no real damage classes yet); `training/` has the fine-tune script ready for when annotated data exists |
+| 2 | Train & validate YOLOv8 damage detector (spec names YOLOv11, see Section 1's deviation note); build inference API | **Scaffolded**: `yolo-service/` API is built and running on the stock COCO checkpoint (placeholder, no real damage classes yet); `training/` has the fine-tune script ready for when annotated data exists |
 | 3 | Build damage JSON → ILA text training pairs from historical claims; fine-tune LLaMA; build inference API | **Not started** — `server/src/models/llmReport.js` currently does zero-shot prompting (works today, no fine-tuning yet) |
 | 4 | Integrate both into "AI ILA" screen in MCMS; log handler corrections | **Done**: `AiIlaAssessmentPage.jsx` + the full `server/` API + `corrections` table are wired end to end |
 | 5 | Set up batch retraining pipeline + versioning + validation process | **Partially done**: `corrections` queue + stats endpoint exist; correction-type classification, versioned model promotion, and A/B validation are not automated yet (Section 7) |
