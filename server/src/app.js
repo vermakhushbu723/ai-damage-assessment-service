@@ -23,6 +23,18 @@ app.use(partsRatesRouter);
 app.use(annotationsRouter);
 app.use(trainingRouter);
 
+// GET / -- a plain "yes, this is up" message for whoever hits the bare
+// server URL in a browser (e.g. checking a deployed VPS is alive) --
+// distinct from /health, which is meant for uptime monitors/scripts.
+app.get('/', (_req, res) => {
+    res.json({
+        service: 'AI Damage Assessment Service',
+        status: 'running',
+        message: 'Backend server chal raha hai ✅',
+        health_check: '/health',
+    });
+});
+
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // Last-resort error handler so a thrown error becomes a clean 500 JSON
