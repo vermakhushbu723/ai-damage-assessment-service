@@ -86,24 +86,58 @@ sudo ufw enable
 
 ## Step 8 — Keep both services running with `pm2`
 
-So they survive terminal disconnects, crashes, and reboots:
+So they survive terminal disconnects, crashes, and reboots.
+
+> **⚠ Run every `pm2` command as the SAME user, always.** Each Linux user has their own
+> completely separate PM2 daemon and process list (`~/.pm2`). If you sometimes run `pm2 start`
+> as `root` and sometimes as `deploy` for the *same* app, you end up with two independent PM2s
+> both trying to bind the same port — one succeeds, the other crash-loops forever with
+> `EADDRINUSE` against the first one, `pm2 list` only shows whichever user you're currently
+> logged in as (so the "healthy" one can be invisible to you), and killing what looks like an
+> "orphaned" process just gets instantly replaced by the other user's PM2 auto-restarting it.
+> This actually happened during this project's setup and took a while to diagnose. **Pick one
+> user for everything (this guide uses `deploy`) and never run `pm2 start`/`restart` as `root`
+> for these apps.**
 
 ```bash
-sudo npm install -g pm2
+# Make sure you're logged in as `deploy`, not root, for all of this:
+su - deploy
+sudo npm install -g pm2   # (needs sudo once, to install the pm2 CLI globally)
 
 # Node service
 cd ~/ai-damage-assessment-service/server
 pm2 start src/server.js --name ai-damage-server
 
-# Python yolo-service
+# Python yolo-service -- `--interpreter none` is required here. Without it,
+# PM2 defaults to running the script through *Node.js*, and since
+# `.venv/bin/uvicorn` is a Python script, that fails immediately with
+# `SyntaxError: Invalid or unexpected token` on its Python shebang line.
 cd ~/ai-damage-assessment-service/yolo-service
-pm2 start ".venv/bin/uvicorn" --name yolo-service -- app:app --host 127.0.0.1 --port 8001
+pm2 start .venv/bin/uvicorn --name yolo-service --interpreter none \
+  --cwd ~/ai-damage-assessment-service/yolo-service -- app:app --host 127.0.0.1 --port 8001
 
 pm2 save
-pm2 startup   # run the command it prints, so both restart automatically on reboot
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u deploy --hp /home/deploy
+# ^ run the exact command it prints if different from this -- it installs a
+# systemd unit that runs `pm2 resurrect` on boot, restoring this process list
 ```
 
-## Step 9 — Nginx reverse proxy + HTTPS
+Verify both actually bound (not just "online" in `pm2 list` -- see the warning above about why
+that can lie):
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8001/health
+```
+
+## Step 9 — Get the backend onto HTTPS
+
+**This step is not optional if any frontend of yours is deployed over HTTPS** (a Vercel site,
+for example). Browsers block a `https://` page from calling a plain `http://` API ("mixed
+content") — the request fails client-side with a generic `Failed to fetch`, no server-side error
+at all, which makes it look like a CORS or connectivity problem when it's actually just the
+`http://` scheme. Pick one:
+
+### Option A — You have a domain: nginx + Let's Encrypt (permanent, recommended for production)
 
 ```bash
 sudo apt install -y nginx certbot python3-certbot-nginx
@@ -129,41 +163,181 @@ sudo nginx -t
 sudo systemctl restart nginx
 sudo certbot --nginx -d api.yourdomain.com   # free HTTPS cert, auto-renews
 ```
+Your backend URL is now `https://api.yourdomain.com`, stable forever.
+
+### Option B — No domain: Cloudflare Tunnel (free, works with just the VPS IP)
+
+Gives you a real HTTPS URL without buying anything. Run as the **same `deploy` user** as
+everything else (see the warning in Step 8):
+
+```bash
+su - deploy
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+
+cd ~/ai-damage-assessment-service
+pm2 start cloudflared --name cf-tunnel --interpreter none --cwd ~/ai-damage-assessment-service \
+  -- tunnel --url http://localhost:8000
+pm2 save
+
+# Get the URL it was assigned:
+cat ~/.pm2/logs/cf-tunnel-out.log ~/.pm2/logs/cf-tunnel-error.log | grep trycloudflare
+```
+You'll get something like `https://random-words-here.trycloudflare.com` — that's your backend's
+public HTTPS URL.
+
+> **⚠ Real limitation, not a bug: this URL changes every time the `cf-tunnel` process restarts**
+> (crash, `pm2 restart`, VPS reboot, `pm2 kill`) — "quick tunnels" are anonymous and don't keep a
+> fixed address. Every time that happens you must re-check the log for the new URL and update
+> `VITE_AI_SERVICE_URL` (both local `.env` and the Vercel dashboard env var, then redeploy on
+> Vercel — see Step 10). If you outgrow this, a **named tunnel** (needs a free Cloudflare account
+> + a domain added to Cloudflare, still no separate hosting cost) gets you a permanent
+> `https://api.yourdomain.com`-style URL instead — see
+> https://developers.cloudflare.com/cloudflare-one/connections/connect-apps. Buying a domain and
+> doing Option A is simpler if you'll need this long-term.
 
 ## Step 10 — Point the frontend at this backend
 
-`car-damage-insurance-web-app`'s `.env`:
+**Local dev** — `car-damage-insurance-web-app/.env` (create it from `.env.example`, gitignored):
 ```
-VITE_AI_SERVICE_URL=https://api.yourdomain.com
+VITE_AI_SERVICE_URL=https://api.yourdomain.com          # Option A
+# or
+VITE_AI_SERVICE_URL=https://random-words.trycloudflare.com   # Option B -- update when it changes
 ```
-And in `server/.env` on the VPS, make sure `CORS_ORIGINS` includes wherever the frontend is
-actually deployed (e.g. its Vercel URL) — not just localhost.
+Restart `npm run dev` after changing this — Vite only reads `.env` at startup.
+
+**Deployed frontend (Vercel)** — a local `.env` file has no effect on what Vercel builds; you
+must set the same variable in Vercel's own project settings:
+1. Vercel dashboard → your project → **Settings → Environment Variables**
+2. Add `VITE_AI_SERVICE_URL` = your backend's HTTPS URL (Production + Preview + Development, or
+   just Production)
+3. **Redeploy** — Vite bakes env vars in at build time, so an existing deployment won't pick up
+   a new env var until you trigger a fresh build (Deployments tab → "..." → Redeploy)
+
+**Either way**, make sure `server/.env` on the VPS has your frontend's real origin in
+`CORS_ORIGINS` (not just `localhost`), then `pm2 restart ai-damage-server`:
+```
+CORS_ORIGINS=http://localhost:5173,https://localhost:5173,https://your-app.vercel.app
+```
 
 ## Step 11 — Verify
 
 ```bash
-curl https://api.yourdomain.com/health
+curl https://your-backend-url/health
 # {"status":"ok"}
+
+# From the browser: confirm CORS is actually open for your frontend's origin
+curl -sI -H "Origin: https://your-app.vercel.app" https://your-backend-url/health | grep -i access-control
+# should show: Access-Control-Allow-Origin: https://your-app.vercel.app
 ```
 Then run a real request from the deployed frontend (the AI ILA page) to confirm the full chain
-(browser → nginx → server/ → yolo-service/) works.
+(browser → nginx-or-tunnel → server/ → yolo-service/) works.
 
 ## Step 12 (optional) — Ollama on the VPS, for real Llama report narration
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull llama3.2:3b
-pm2 start "ollama" --name ollama -- serve
+# --interpreter none is required (same reason as yolo-service in Step 8 --
+# ollama is a native binary, not JS, and PM2 defaults to running everything
+# through node)
+pm2 start ollama --name ollama --interpreter none -- serve
 ```
 On a small VPS (2-4GB RAM), running Ollama + `yolo-service` at the same time can be tight —
 watch memory usage (`free -h`). Without Ollama, `/report` still works and returns a clearly-labeled
 templated narrative instead of failing (see `README.md`'s "what's real vs placeholder").
 
+## Redeploying after `git push` (routine updates)
+
+Once the VPS is set up (Steps 1-9 above, done once), shipping a new change from local dev to the
+live VPS is just:
+
+```bash
+ssh deploy@200.234.37.130
+cd /home/deploy/ai-damage-assessment-service
+git pull
+
+# Only if server/package.json changed (new dependency):
+cd server && npm install && cd ..
+
+# Only if yolo-service/requirements.txt changed:
+cd yolo-service && source .venv/bin/activate && pip install -r requirements.txt && deactivate && cd ..
+
+# Restart whichever service(s) actually changed -- restarting both is always safe too
+pm2 restart ai-damage-server
+pm2 restart yolo-service
+
+# Verify
+curl http://127.0.0.1:8000/
+curl http://127.0.0.1:8000/health
+pm2 logs --lines 30 --nostream
+```
+
+**Path reference for this VPS:**
+
+| What | Path |
+|---|---|
+| Repo root | `/home/deploy/ai-damage-assessment-service` |
+| Node service | `/home/deploy/ai-damage-assessment-service/server` |
+| Python yolo-service | `/home/deploy/ai-damage-assessment-service/yolo-service` |
+| pm2 process names | `ai-damage-server` (Node), `yolo-service` (Python), `ollama` (if installed) |
+| Node service `.env` | `/home/deploy/ai-damage-assessment-service/server/.env` |
+| yolo-service `.env` | `/home/deploy/ai-damage-assessment-service/yolo-service/.env` |
+| pm2 process names | `ai-damage-server`, `yolo-service`, `cf-tunnel` (if using Option B), `ollama` (if installed) |
+
+**⚠ Don't run `npm start` or `node src/server.js` directly on the VPS** (not even with `&` to
+background it) — if you forget to stop it, it keeps holding the port after you log out, and the
+*next* `pm2 restart` then fails with `EADDRINUSE` while the orphaned process keeps serving stale
+code. Always go through `pm2 start`/`pm2 restart`.
+
+## Troubleshooting
+
+### `EADDRINUSE` in `pm2 logs`, but `pm2 list` claims the app is "online"
+
+Two different root causes produce this exact symptom, both hit while setting this project up:
+
+1. **You ran `pm2 start`/`restart` as a different Linux user than usual (e.g. once as `root`,
+   once as `deploy`).** Each user has a fully separate PM2 daemon and process list — `pm2 list`
+   only ever shows *your current user's* view, so a perfectly healthy process started earlier
+   under the other user is invisible to you, silently holding the port, while your current
+   user's PM2 keeps trying and failing to bind it. Fix: `sudo lsof -i :8000` to find the real PID
+   and its owning user, then check that specific user's `pm2 list` (`sudo -iu <user> pm2 list`)
+   to find where it's actually managed, and consolidate everything onto one user (see the
+   warning in Step 8) — don't just `kill -9` it and re-`pm2 start` as the *other* user, or you've
+   only swapped which side wins the race.
+2. **A truly orphaned process** (started once via a bare `npm start &`/`node src/server.js &`
+   that never got cleaned up) is holding the port outside of PM2 entirely. Fix: `sudo lsof -i
+   :8000`, cross-check the PID against `pm2 show ai-damage-server`'s `pid` field, `kill -9`
+   whichever one *isn't* PM2's, then `pm2 restart ai-damage-server`.
+
+### `yolo-service` (or `ollama`, or `cf-tunnel`) crashes instantly with `SyntaxError: Invalid or unexpected token` pointing at a shebang line (`# -*- coding: utf-8 -*-` or similar)
+
+PM2 defaults to running every script through **Node.js**. `.venv/bin/uvicorn` is a Python script
+and `cloudflared`/`ollama` are native binaries — none of them are JS, so Node's module loader
+chokes on the first line. Fix: add `--interpreter none` to the `pm2 start` command (already
+correct in Step 8/9/12 above) so PM2 just executes the file directly.
+
+### Frontend shows "Failed to fetch" / "Could not reach the AI service", nothing in server logs at all
+
+The request never reached the server — check, in order:
+1. **Mixed content**: is the frontend on `https://` and the backend URL on plain `http://`?
+   Browsers silently block this (see Step 9). Fix: put the backend behind HTTPS (nginx+domain or
+   Cloudflare Tunnel).
+2. **Stale `VITE_AI_SERVICE_URL`**: for a *deployed* frontend (Vercel etc.), a local `.env` change
+   does nothing — the env var must be set in the hosting platform's dashboard and the site
+   **redeployed** (Vite bakes it in at build time). See Step 10.
+3. **CORS**: `curl -sI -H "Origin: https://your-frontend" https://your-backend/health | grep
+   access-control` — if `Access-Control-Allow-Origin` is missing, add your frontend's origin to
+   `server/.env`'s `CORS_ORIGINS` on the VPS and `pm2 restart ai-damage-server`.
+4. **Firewall**: if using nginx (Option A), only 80/443 need to be open — `server/`'s port 8000
+   should stay closed to the internet. If testing directly against port 8000 (no reverse proxy at
+   all), `sudo ufw allow 8000/tcp`.
+
 ## Ongoing maintenance
 
 - `pm2 logs` — check errors
-- `pm2 restart all` — after deploying new code
-- Deploy an update: `git pull` → `npm install` (if `server/package.json` changed) → `pm2 restart ai-damage-server`
+- `pm2 list` — see status/uptime/restart-count of every managed process (remember: as the right
+  user, see the Troubleshooting section above)
 - Watch disk space (`df -h`) — `uploads/`, `training/runs/`, and any raw_pool photos accumulate over time
 - **Training doesn't happen on this VPS** — fine-tune elsewhere (GPU machine/cloud, see
   `docs/ARCHITECTURE.md` Section 8), then `scp`/upload the resulting `best.pt` here and point

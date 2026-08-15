@@ -37,7 +37,14 @@ export const settings = {
     ),
     // The web app's Vite dev server runs with `https: true` (self-signed
     // cert) -- both schemes are listed since the browser's actual origin
-    // depends on that config.
-    corsOrigins: toList(process.env.CORS_ORIGINS || 'http://localhost:5173,https://localhost:5173,http://localhost:4173,https://localhost:4173'),
+    // depends on that config. Set CORS_ORIGINS=* to allow ANY origin
+    // (reflects whatever Origin the browser sent, since a literal `*` isn't
+    // valid alongside `credentials: true`) -- useful while Vercel keeps
+    // handing out a new preview URL per deploy, at the cost of no longer
+    // restricting who can call this API from a browser. Lock this back down
+    // to a real allowlist before this handles anything sensitive.
+    corsOrigins: process.env.CORS_ORIGINS === '*'
+        ? true
+        : toList(process.env.CORS_ORIGINS || 'http://localhost:5173,https://localhost:5173,http://localhost:4173,https://localhost:4173'),
     retrainVolumeThreshold: Number(process.env.RETRAIN_VOLUME_THRESHOLD || 5000),
 };
