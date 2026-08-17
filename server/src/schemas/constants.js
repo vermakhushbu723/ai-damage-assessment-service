@@ -3,15 +3,23 @@
 
 export const VEHICLE_TYPES = ['car', 'two_wheeler', 'commercial_vehicle'];
 
-export const DAMAGE_TYPES = ['dent', 'scratch', 'crack', 'shatter', 'deformation', 'tear', 'unknown'];
+// The 6 damage classes are CarDD's (Wang et al., "CarDD: A New Dataset for
+// Vision-based Car Damage Detection") -- this is now the project's
+// model-grounded taxonomy, matching yolo-service's default checkpoint
+// ("cardd-seg.pt", see yolo-service/app.py's module docstring) rather than
+// a client-spec-derived guess with no real model behind it.
+export const DAMAGE_TYPES = ['crack', 'dent', 'glass_shatter', 'lamp_broken', 'scratch', 'tire_flat', 'unknown'];
 
 // The subset of DAMAGE_TYPES that's actually trainable -- 'unknown' is only
 // ever placeholder-model output, never something a human annotates. Order
-// here IS the YOLO class id (index 0 = class 0, etc.) -- it must stay in
-// sync with training/scripts/prepare_dataset.py's DAMAGE_TYPE_NAMES and
-// training/data/<vehicle_type>/data.yaml's `names:` list, or annotations
-// saved here will silently train against the wrong class ids.
-export const TRAINABLE_DAMAGE_TYPES = ['dent', 'scratch', 'crack', 'shatter', 'deformation', 'tear'];
+// here IS the YOLO class id (index 0 = class 0, etc.) -- matches the CarDD
+// checkpoint's own class order exactly, since Annotation Studio and
+// training/scripts/train.py fine-tune *starting from* that checkpoint (see
+// training/README.md). Must stay in sync with training/scripts/
+// prepare_dataset.py's DAMAGE_TYPE_NAMES and training/data/<vehicle_type>/
+// data.yaml's `names:` list, or annotations saved here will silently train
+// against the wrong class ids.
+export const TRAINABLE_DAMAGE_TYPES = ['crack', 'dent', 'glass_shatter', 'lamp_broken', 'scratch', 'tire_flat'];
 
 export const SEVERITY_TIERS = ['minor', 'moderate', 'severe'];
 

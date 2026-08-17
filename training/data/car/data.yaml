@@ -2,9 +2,9 @@ path: .
 train: images/train
 val: images/val
 names:
-  0: dent
-  1: scratch
-  2: crack
-  3: shatter
-  4: deformation
-  5: tear
+  0: crack
+  1: dent
+  2: glass_shatter
+  3: lamp_broken
+  4: scratch
+  5: tire_flat

@@ -3,8 +3,10 @@ docs/ARCHITECTURE.md (which specs YOLOv11; this project deliberately uses
 YOLOv8 instead for its maturity/CPU stability -- see yolo-service/app.py's
 module docstring).
 
-First run (no prior fine-tuned checkpoint yet):
-    python train.py --vehicle-type car --base yolov8s-seg.pt --epochs 150
+First run (no prior fine-tuned checkpoint yet -- starts from "cardd-seg.pt",
+a checkpoint already pretrained on real car-damage photos, not generic
+COCO, see yolo-service/app.py's module docstring):
+    python train.py --vehicle-type car --base cardd-seg.pt --epochs 150
 
 Later runs — continual fine-tuning from your last checkpoint on top of
 newly corrected data prepared via prepare_dataset.py or
@@ -23,12 +25,32 @@ original architecture proposal.
 from __future__ import annotations
 
 import argparse
+import os
+import urllib.request
 from pathlib import Path
 
 import yaml
 
 SCRIPT_DIR = Path(__file__).parent
 TRAINING_ROOT = SCRIPT_DIR.parent
+
+# Mirrors yolo-service/app.py's _DOWNLOADABLE_CHECKPOINTS -- "cardd-seg.pt"
+# isn't one of Ultralytics' own auto-downloadable stock names, so we have to
+# fetch it ourselves before handing the path to YOLO(...). Keep in sync if
+# you add more.
+_DOWNLOADABLE_CHECKPOINTS = {
+    "cardd-seg.pt": "https://huggingface.co/harpreetsahota/car-dd-segmentation-yolov11/resolve/main/best.pt",
+}
+
+
+def _ensure_downloaded(weights_path: str) -> None:
+    if weights_path not in _DOWNLOADABLE_CHECKPOINTS or Path(weights_path).exists():
+        return
+    url = _DOWNLOADABLE_CHECKPOINTS[weights_path]
+    print(f"Downloading {weights_path} from {url} (one-time, ~120MB)...")
+    tmp_path = f"{weights_path}.part"
+    urllib.request.urlretrieve(url, tmp_path)
+    os.replace(tmp_path, weights_path)
 
 
 def _resolve_data_yaml(vehicle_type: str) -> Path:
@@ -60,7 +82,7 @@ def _resolve_data_yaml(vehicle_type: str) -> Path:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--vehicle-type", choices=["car", "two_wheeler", "commercial_vehicle"], required=True)
-    parser.add_argument("--base", default="yolov8s-seg.pt", help="Base checkpoint: stock or a prior fine-tune's best.pt")
+    parser.add_argument("--base", default="cardd-seg.pt", help="Base checkpoint: stock/CarDD-pretrained, or a prior fine-tune's best.pt")
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--imgsz", type=int, default=1280, help="Higher than the 640 default -- damage regions are often small relative to the whole vehicle.")
     parser.add_argument("--batch", type=int, default=16, help="Lower this (e.g. 2-4) on CPU with a large/big base checkpoint -- see training/README.md's CPU troubleshooting note.")
@@ -80,6 +102,7 @@ def main() -> None:
 
     data_yaml = _resolve_data_yaml(args.vehicle_type)
 
+    _ensure_downloaded(args.base)
     model = YOLO(args.base)
     run_name = args.run_name or f"{args.vehicle_type}_finetune"
 

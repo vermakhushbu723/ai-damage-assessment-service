@@ -39,7 +39,7 @@ function scoreSeverity(detection) {
     const ratio = detection.mask_area_ratio;
     const isStructural = STRUCTURAL_PARTS.has(detection.part);
 
-    if (detection.damage_type === 'shatter') return 'severe'; // shatter is always severe regardless of area
+    if (detection.damage_type === 'glass_shatter') return 'severe'; // glass_shatter is always severe regardless of area
 
     if (isStructural) {
         if (ratio > 0.25) return 'severe';

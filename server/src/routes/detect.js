@@ -58,13 +58,14 @@ router.post('/api/v1/detect', upload.single('photo'), async (req, res) => {
             });
         }
 
-        const { detections, is_placeholder_model, model_checkpoint } = await yoloResponse.json();
+        const { detections, is_placeholder_model, detected_real_damage_classes, model_checkpoint } = await yoloResponse.json();
 
         return res.json({
             photo_id: photoId,
             vehicle_type: vehicleType,
             detections,
             is_placeholder_model,
+            detected_real_damage_classes,
             model_checkpoint,
         });
     } catch (err) {

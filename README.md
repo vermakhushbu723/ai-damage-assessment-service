@@ -38,9 +38,12 @@ Training itself doesn't happen on that VPS — see its "Ongoing maintenance" sec
 ## What's real vs. placeholder right now
 
 - The Node.js API, database, cost engine, and cause-consistency rules are fully functional today.
-- Damage **detection** runs on the stock Ultralytics COCO-pretrained checkpoint until you
-  configure fine-tuned weights (`YOLO_CAR_WEIGHTS` etc. in `yolo-service/.env`) — every response
-  says so via `is_placeholder_model: true`. See `docs/ARCHITECTURE.md` Section 9 (build phases).
+- Damage **detection** runs on `cardd-seg.pt` by default — a real checkpoint pretrained on the
+  published CarDD dataset (crack/dent/glass_shatter/lamp_broken/scratch/tire_flat), not a generic
+  COCO model, so it detects real damage types out of the box. `is_placeholder_model: true` still
+  shows in every response until you configure your own fine-tuned weights (`YOLO_CAR_WEIGHTS` etc.
+  in `yolo-service/.env`) — it means "not fine-tuned on your photos / no part-assignment yet," not
+  "doesn't know what damage is." See `docs/ARCHITECTURE.md` Section 5.1 and Section 9 (build phases).
 - Report **narration** calls a local Ollama server; if it's not running, `/report` still responds
   with a clearly-labeled templated summary instead of failing.
 - Llama fine-tuning (Section 5.2 of the architecture doc) isn't built yet — narration is
@@ -77,7 +80,7 @@ cp .env.example .env
 uvicorn app:app --reload --port 8001
 ```
 
-The first request will auto-download the stock `yolov8s-seg.pt` checkpoint via
+The first request will auto-download the `cardd-seg.pt` checkpoint via
 `ultralytics` — needs internet access once, then it's cached locally. `server/.env`'s
 `YOLO_SERVICE_URL` (default `http://localhost:8001`) is how the Node service finds this.
 

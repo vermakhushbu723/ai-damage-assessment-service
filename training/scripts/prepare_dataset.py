@@ -33,7 +33,11 @@ from pathlib import Path
 
 import yaml
 
-DAMAGE_TYPE_NAMES = ["dent", "scratch", "crack", "shatter", "deformation", "tear"]
+# CarDD's 6 classes (Wang et al.) -- matches yolo-service/app.py's default
+# checkpoint's own class order, since fine-tuning starts *from* that
+# checkpoint. Must stay in sync with server/src/schemas/constants.js's
+# TRAINABLE_DAMAGE_TYPES and training/data/<vehicle_type>/data.yaml.
+DAMAGE_TYPE_NAMES = ["crack", "dent", "glass_shatter", "lamp_broken", "scratch", "tire_flat"]
 
 SCRIPT_DIR = Path(__file__).parent
 TRAINING_ROOT = SCRIPT_DIR.parent

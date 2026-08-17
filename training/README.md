@@ -11,6 +11,12 @@ before you have real annotated photos.
 > more predictable CPU training behavior. Flag this to the client before going live; swapping
 > back to a YOLO11 checkpoint later is a one-line change (`--base yolo11l-seg.pt` etc.) if needed.
 
+> **Note:** the damage-type taxonomy here (6 classes: crack, dent, glass_shatter, lamp_broken,
+> scratch, tire_flat) is **CarDD's** (a published academic dataset), not the client spec's
+> original ten-type list — see docs/ARCHITECTURE.md Section 3.2 for the reasoning. All fine-tuning
+> below continues *from* the CarDD-pretrained checkpoint, so you're specializing an
+> already-damage-aware model rather than starting from generic COCO weights.
+
 ## The full loop, end to end
 
 ```
@@ -78,7 +84,7 @@ python scripts/prepare_dataset.py --raw-pool ./raw_pool --vehicle-type car \
 ```
 
 This does the **stratified-by-damage-type** split from Section 2.1 (so a rare class like
-"shatter" doesn't accidentally end up entirely in one split), and writes `data/car/data.yaml` +
+"tire_flat" doesn't accidentally end up entirely in one split), and writes `data/car/data.yaml` +
 populates `data/car/images/{train,val,test}` and `labels/{train,val,test}`.
 
 ## Step 3 — This repo's sample dataset (already prepared, try it now)
@@ -102,36 +108,41 @@ so you can see the exact file format and run the training command below without 
 not produce a model that detects real damage. Replace it with your own annotated photos via
 Step 1 as soon as you have them.
 
-## Step 4 — Fine-tune YOLOv8-seg
+## Step 4 — Fine-tune YOLOv8-seg (starting from the CarDD-pretrained checkpoint)
 
 ```bash
 cd ai-damage-assessment-service
 python -m venv .venv-training                 # separate from yolo-service/.venv, same idea
 .venv-training\Scripts\activate                # Windows; `source .venv-training/bin/activate` on Mac/Linux
 pip install -r training/requirements.txt
-python training/scripts/train.py --vehicle-type car --base yolov8n-seg.pt --epochs 150 --device cpu
+python training/scripts/train.py --vehicle-type car --base cardd-seg.pt --epochs 150 --device cpu --batch 2
 ```
 
-`--base yolov8n-seg.pt` (nano) auto-downloads the stock COCO-pretrained checkpoint the first
-time. This kicks off a `yolo segment train` run (1280px image size, early-stop patience 25) —
-with this repo's tiny sample set it'll run in a couple of minutes on CPU and produce a
-(not-yet-useful, sample-data-sized) checkpoint at
+`--base cardd-seg.pt` (the project's default -- see `yolo-service/app.py`'s module docstring)
+auto-downloads a checkpoint already pretrained on real car-damage photos (~120MB, from Hugging
+Face) the first time, rather than starting from generic COCO weights. This kicks off a `yolo
+segment train` run (1280px image size, early-stop patience 25) — with this repo's tiny sample set
+it'll run in a few minutes on CPU and produce a (not-yet-useful, sample-data-sized) checkpoint at
 `training/runs/segment/car_finetune/weights/best.pt`, which is exactly what you'd point a real
-run's larger dataset at too. For a real fine-tune, `--base yolov8s-seg.pt` (small, the project's
-default) is a better accuracy/speed tradeoff — see the CPU warning below before picking anything
-bigger.
+run's larger dataset at too.
 
-> **⚠ CPU + a large base checkpoint (e.g. `yolov8m-seg.pt`/`yolov8l-seg.pt`, or the `yolo11l-seg.pt`
-> this project used before switching to YOLOv8) will likely crash.**
-> Found while testing the web UI's "Start Training" button: a large checkpoint at the default
-> `batch=16`/`imgsz=1280` reliably crashes with an out-of-memory access violation (exit code
-> `3221225477` / `0xC0000005` on Windows, no Python traceback — the crash happens inside
-> OpenCV/PyTorch native code during the first batch, below where Python could catch it) on a
-> 16GB CPU-only machine. **Fix: add `--batch 2`** (or however low your RAM needs). The web UI's
-> "Start Training" button already defaults to `batch=2` on CPU automatically — this only matters
-> if you're running `train.py` by hand. A big checkpoint is really meant for a GPU (see
-> `docs/ARCHITECTURE.md` Section 8) — CPU is fine for proving the pipeline works (nano/small
-> checkpoint), not for a real fine-tune with the larger variants.
+> **⚠ CPU + `cardd-seg.pt` (or any other large checkpoint, e.g. `yolov8m-seg.pt`/`yolov8l-seg.pt`,
+> or the `yolo11l-seg.pt` this project used before switching to YOLOv8) will likely crash at the
+> default batch size.** `cardd-seg.pt` is a large-scale model (~120MB) -- found while testing the
+> web UI's "Start Training" button: a large checkpoint at the default `batch=16`/`imgsz=1280`
+> reliably crashes with an out-of-memory access violation (exit code `3221225477` / `0xC0000005`
+> on Windows, no Python traceback — the crash happens inside OpenCV/PyTorch native code during
+> the first batch, below where Python could catch it) on a 16GB CPU-only machine. **Fix: add
+> `--batch 2`** (or however low your RAM needs -- already included in the command above). The web
+> UI's "Start Training" button already defaults to `batch=2` on CPU automatically — this only
+> matters if you're running `train.py` by hand. CPU is fine for proving the pipeline works with a
+> low batch size; a GPU (see `docs/ARCHITECTURE.md` Section 8) is what makes a real, full-size
+> fine-tune practical at normal batch sizes.
+>
+> If you want a faster, lighter *sanity check* before committing to a full `cardd-seg.pt` run,
+> `--base yolov8n-seg.pt` (generic COCO, ~7MB, auto-downloaded by Ultralytics itself) trains in
+> seconds even at default batch size — it just won't detect real damage types, only prove the
+> mechanics work (see Step 3's sample-data caveat).
 
 Validate any checkpoint against a vehicle type's held-out set:
 ```bash

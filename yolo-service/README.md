@@ -21,8 +21,9 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-The first request will auto-download the stock `yolov8s-seg.pt` checkpoint
-via `ultralytics` — needs internet access once, then it's cached.
+The first request auto-downloads `cardd-seg.pt` (~120MB, from Hugging Face —
+see `app.py`'s module docstring) — needs internet access once, then it's
+cached locally.
 
 ## Run
 
@@ -35,7 +36,12 @@ default (`YOLO_SERVICE_URL` in `../server/.env`).
 
 ## What's real vs. placeholder
 
-Runs on the stock COCO-pretrained checkpoint until you configure fine-tuned
-weights (`YOLO_CAR_WEIGHTS` etc. in `.env`) — every response says so via
-`is_placeholder_model: true`. Fine-tuning that checkpoint on your own
-annotated damage photos is covered in `../training/README.md`.
+Runs on `cardd-seg.pt` by default -- a real checkpoint pretrained on the
+published CarDD dataset (6 damage classes: crack, dent, glass_shatter,
+lamp_broken, scratch, tire_flat), not a generic COCO model, so damage
+detection is genuinely meaningful out of the box. `is_placeholder_model:
+true` still shows in every response until you configure your own
+fine-tuned weights (`YOLO_CAR_WEIGHTS` etc. in `.env`) -- it means "not
+fine-tuned on your photos / no part-assignment yet." Fine-tuning
+`cardd-seg.pt` further on your own annotated damage photos is covered in
+`../training/README.md`.

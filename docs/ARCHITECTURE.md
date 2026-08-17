@@ -42,8 +42,8 @@ Survey Photos + Claim Metadata (cause of loss, vehicle details, policy info)
 
 > **⚠ Deviation from the client's original spec: YOLOv8-seg, not YOLOv11.** The client's
 > "AI ILA Model — Technical Specification" names YOLOv11. This repo uses **YOLOv8-seg**
-> instead — same `ultralytics` package/API, just a different pretrained checkpoint (`yolov8s-seg.pt`
-> vs `yolo11l-seg.pt`) — chosen for YOLOv8's greater maturity, more extensive documentation/
+> instead — same `ultralytics` package/API, just a different pretrained checkpoint (`cardd-seg.pt`,
+> a YOLOv8-compatible architecture, vs `yolo11l-seg.pt`) — chosen for YOLOv8's greater maturity, more extensive documentation/
 > community support, and (found through hands-on testing on this project's CPU-only dev machine)
 > more predictable CPU training behavior; YOLO11's marginal architecture improvements over v8
 > matter less here than training stability does. **Flag this to the client for sign-off before
@@ -198,12 +198,23 @@ a label taxonomy after 500+ photos are annotated means re-annotating:
   granular set (`front_collision`, `rear_ended`, `side_collision_left`, ...) as a stand-in; align
   these with the real Claim Intimation dropdown values once annotation starts.
 
-> The scaffold's `DAMAGE_TYPES` constant (`server/src/schemas/constants.js`) currently has
-> `dent, scratch, crack, shatter, deformation, tear, unknown` — a slightly different list than the
-> client spec's ten types above. Reconcile these before annotating: either adopt the spec's list
-> verbatim (recommended, since it's the client's authoritative taxonomy) or document why the
-> scaffold's list differs, then update `constants.js` and the YOLO `data.yaml` class list
-> together so they never drift apart.
+> **Reconciled (deviation from the client spec's ten types, decided and implemented):** the
+> scaffold's `DAMAGE_TYPES` constant (`server/src/schemas/constants.js`) now uses
+> **CarDD's 6 classes** — `crack, dent, glass_shatter, lamp_broken, scratch, tire_flat,
+> unknown` — instead of the client spec's ten (`dent, scratch, crack, broken, shattered,
+> misaligned, missing part, rust/corrosion, deep dent, paint damage`). Reasoning: CarDD (Wang et
+> al., "CarDD: A New Dataset for Vision-based Car Damage Detection") is a real, published,
+> peer-reviewed dataset with a genuinely pretrained checkpoint available
+> (`yolo-service/app.py`'s default `cardd-seg.pt`) — adopting its taxonomy means damage detection
+> produces real, meaningful results **today**, before a single one of your own photos is
+> annotated (see Section 5.1's PoC note), rather than annotating against a ten-type list with no
+> model behind any of it yet. **Flag this to the client for sign-off** — it's a materially
+> different (smaller, differently-named) label set than what the spec describes, and the four
+> spec types with no CarDD equivalent (`misaligned, missing part, rust/corrosion, paint damage`)
+> aren't detectable until you fine-tune your own model on annotated photos that include them
+> (`training/README.md`). `constants.js`, `yolo-service/app.py`, the frontend's Annotation
+> Studio, the training scripts, and `training/data/*/data.yaml` are all kept in sync on this
+> list — see the cross-reference comments in each.
 
 ### 3.3 ILA text training pair (input to Stage 2 fine-tuning)
 
@@ -253,11 +264,24 @@ Llama is listed as improving quality, not as a hard prerequisite for the pipelin
 (Client spec names YOLOv11 for this stage — see the deviation note in Section 1 for why this repo
 uses YOLOv8 instead.)
 
+**PoC-first approach (recommended, and what this repo does by default):** rather than starting
+from a generic COCO-pretrained checkpoint (which has never seen a dent or a scratch and can only
+outline "a vehicle"), `yolo-service` and `training/scripts/train.py` both default to
+**`cardd-seg.pt`** — a checkpoint already pretrained on CarDD (Wang et al., 4,000 images, 6 damage
+classes: crack, dent, glass shatter, lamp broken, scratch, tire flat), auto-downloaded from
+Hugging Face on first use. This means the full pipeline (photo → detection → cost → Llama report)
+produces real, meaningful results **before you've annotated a single one of your own photos** —
+useful for demoing/validating the end-to-end flow while real annotation work (Section 2) ramps up
+in parallel. It is **not** a substitute for fine-tuning on your own photos: it doesn't know your
+specific vehicle mix, regional damage patterns, or photo conditions, and it doesn't assign a
+*part* (bumper/door/etc.) to each detection — see the `TODO` in `yolo-service/app.py`'s `detect()`.
+
 - Framework: `ultralytics` Python package (`pip install`, runs offline once weights are downloaded
   once) — see `training/README.md` and `training/scripts/train.py` in this repo, already wired to
   this exact workflow.
-- Start from COCO-pretrained YOLOv8 weights (`yolov8s-seg.pt`, matching `yolo-service`'s default),
-  fine-tune on your annotated dataset.
+- Fine-tune **starting from `cardd-seg.pt`** (matching `yolo-service`'s default), not from
+  scratch or from generic COCO weights — you're specializing an already-damage-aware model on
+  your own photos, not teaching it what damage looks like from zero.
 - Standard supervised (instance segmentation) training — no custom research needed, this is a
   well-trodden path.
 - Output: a `.pt` model file, pointed at by `yolo-service/.env`'s `YOLO_CAR_WEIGHTS` /
@@ -388,8 +412,8 @@ choice), but the timeline and budget differ substantially.
 
 | Phase | Scope | Status in this repo |
 |---|---|---|
-| 1 | Finalize label sets (parts/damage types/severity), set up CVAT, annotate first ~2,000 photos | **Not started** — reconcile `constants.js`'s damage-type list with Section 3.2 first |
-| 2 | Train & validate YOLOv8 damage detector (spec names YOLOv11, see Section 1's deviation note); build inference API | **Scaffolded**: `yolo-service/` API is built and running on the stock COCO checkpoint (placeholder, no real damage classes yet); `training/` has the fine-tune script ready for when annotated data exists |
+| 1 | Finalize label sets (parts/damage types/severity), set up CVAT, annotate first ~2,000 photos | **Damage types reconciled** (adopted CarDD's 6-class taxonomy, see Section 3.2) — parts/severity annotation still not started, no real photos annotated yet |
+| 2 | Train & validate YOLOv8 damage detector (spec names YOLOv11, see Section 1's deviation note); build inference API | **PoC-ready**: `yolo-service/` defaults to `cardd-seg.pt`, a real pretrained checkpoint that detects the 6 CarDD damage types out of the box (not COCO placeholder) — `is_placeholder_model` still `true` since it isn't fine-tuned on *your* photos and doesn't assign parts yet; `training/` has the fine-tune script ready, defaults to continuing from this same checkpoint |
 | 3 | Build damage JSON → ILA text training pairs from historical claims; fine-tune LLaMA; build inference API | **Not started** — `server/src/models/llmReport.js` currently does zero-shot prompting (works today, no fine-tuning yet) |
 | 4 | Integrate both into "AI ILA" screen in MCMS; log handler corrections | **Done**: `AiIlaAssessmentPage.jsx` + the full `server/` API + `corrections` table are wired end to end |
 | 5 | Set up batch retraining pipeline + versioning + validation process | **Partially done**: `corrections` queue + stats endpoint exist; correction-type classification, versioned model promotion, and A/B validation are not automated yet (Section 7) |

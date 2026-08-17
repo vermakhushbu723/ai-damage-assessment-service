@@ -10,6 +10,8 @@ server/uploads/
 yolo-service/.venv/
 yolo-service/__pycache__/
 yolo-service/.env
+yolo-service/uvicorn*.log
+yolo-service/uvicorn.pid
 training/.venv/
 training/__pycache__/
 training/data/*/.data.resolved.yaml

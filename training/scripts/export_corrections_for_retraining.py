@@ -44,7 +44,9 @@ SERVICE_ROOT = TRAINING_ROOT.parent
 DB_FILE = Path(os.environ.get("SERVER_DATABASE_FILE", SERVICE_ROOT / "server" / "ai_damage_assessment.db"))
 UPLOAD_DIR = Path(os.environ.get("SERVER_UPLOAD_DIR", SERVICE_ROOT / "server" / "uploads"))
 
-DAMAGE_TYPE_NAMES = ["dent", "scratch", "crack", "shatter", "deformation", "tear"]
+# Keep in sync with prepare_dataset.py's DAMAGE_TYPE_NAMES (same reasoning
+# there re: CarDD class order).
+DAMAGE_TYPE_NAMES = ["crack", "dent", "glass_shatter", "lamp_broken", "scratch", "tire_flat"]
 
 
 def _find_uploaded_photo(photo_id: str) -> Path | None:
