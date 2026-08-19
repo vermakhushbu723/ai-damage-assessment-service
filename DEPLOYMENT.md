@@ -19,9 +19,11 @@ This is what's actually running today, as a concrete example of Steps 1-10 below
 | Repos on VPS | `/home/deploy/ai-damage-assessment-service`, `/home/deploy/car-damage-insurance-web-app` |
 
 The frontend is **also** deployed separately on Vercel — both point at the same
-`https://api.ibimaassist.online` backend. `server/.env`'s `CORS_ORIGINS` is currently `*`
-(allow-any) specifically to avoid re-breaking Vercel's per-deploy preview URLs (see Step 10) —
-tighten it to an explicit allowlist once the set of real frontend origins is stable.
+`https://api.ibimaassist.online` backend. `server/.env`'s `CORS_ORIGINS` is now a real allowlist
+(both `ibimaassist.online` domains, the stable Vercel alias, a couple of older per-deploy Vercel
+preview URLs kept for safety, and localhost for dev) instead of the `*` wildcard used while things
+were still settling — see Step 10. If a *new* Vercel preview URL ever gets CORS-blocked, add it
+here and `pm2 restart ai-damage-server --update-env`.
 
 **Redeploying the frontend after a `git push`** (mirrors the Node/Python steps under "Redeploying
 after `git push`" below):
