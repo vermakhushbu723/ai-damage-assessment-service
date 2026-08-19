@@ -6,6 +6,43 @@ requests; real model training happens elsewhere (a GPU machine/cloud instance �
 `docs/ARCHITECTURE.md` Section 8 and `training/README.md`) and the resulting checkpoint gets
 uploaded here afterward.
 
+## Current live setup (reference)
+
+This is what's actually running today, as a concrete example of Steps 1-10 below:
+
+| What | Where |
+|---|---|
+| VPS | `200.234.37.130`, Ubuntu, user `deploy` (see the warning in Step 8 about staying on this one user) |
+| Backend | `https://api.ibimaassist.online` → nginx → `server/` (port 8000) → `yolo-service/` (port 8001) |
+| Frontend | `https://ibimaassist.online` (+ `www.`) → nginx serving `car-damage-insurance-web-app`'s built `dist/` as static files |
+| SSL | Let's Encrypt via `certbot --nginx`, auto-renews (`certbot.timer`) |
+| Repos on VPS | `/home/deploy/ai-damage-assessment-service`, `/home/deploy/car-damage-insurance-web-app` |
+
+The frontend is **also** deployed separately on Vercel — both point at the same
+`https://api.ibimaassist.online` backend. `server/.env`'s `CORS_ORIGINS` is currently `*`
+(allow-any) specifically to avoid re-breaking Vercel's per-deploy preview URLs (see Step 10) —
+tighten it to an explicit allowlist once the set of real frontend origins is stable.
+
+**Redeploying the frontend after a `git push`** (mirrors the Node/Python steps under "Redeploying
+after `git push`" below):
+```bash
+ssh deploy@200.234.37.130
+cd /home/deploy/car-damage-insurance-web-app
+git pull
+npm install                # only if package.json changed
+npm run build               # writes dist/ -- nginx serves this directly, no restart needed
+```
+`.env` there is `VITE_AI_SERVICE_URL=https://api.ibimaassist.online` (baked in at build time —
+change it and you must `npm run build` again, a running `npm run dev` won't pick it up either).
+
+**One-time gotcha hit setting this up:** nginx (`www-data`) couldn't read
+`/home/deploy/car-damage-insurance-web-app/dist/` — `/home/deploy` itself is `750` (owner+group
+only), which blocks `www-data` from traversing into it even though `dist/` itself was world- or
+group-readable. Fixed with `usermod -aG deploy www-data` + `systemctl restart nginx` (a `reload`
+isn't enough — supplementary group membership is only read at worker process start). If a static
+site 500s with "Permission denied" in `/var/log/nginx/error.log` on a path that looks readable,
+check this first.
+
 ## Step 1 — Pick a VPS plan
 
 | Resource | Minimum | Recommended |
