@@ -49,3 +49,24 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
     CREATE INDEX IF NOT EXISTS idx_claims_created_by ON claims(created_by_user_id);
 `);
+
+// Lightweight migration for columns added after the table already existed
+// in some environments -- node:sqlite has no migration framework, so this
+// just checks PRAGMA table_info and ALTERs if missing. Safe to run on every
+// startup (idempotent).
+//   documents_json        -- Document Upload page's per-document status
+//                             (id -> { label, submitted, sides/count }),
+//                             set via PATCH /api/v1/claims/:id
+//   captured_angles_json  -- Photo Capture / Add Damage Photos pages'
+//                             per-angle capture status (angle id -> true).
+//                             NOTE: this stores completion status only, not
+//                             the photo bytes themselves -- captured images
+//                             still live in the browser (localStorage data
+//                             URLs), same as before this backend existed.
+const existingColumns = db.prepare('PRAGMA table_info(claims)').all().map((c) => c.name);
+if (!existingColumns.includes('documents_json')) {
+    db.exec('ALTER TABLE claims ADD COLUMN documents_json TEXT');
+}
+if (!existingColumns.includes('captured_angles_json')) {
+    db.exec('ALTER TABLE claims ADD COLUMN captured_angles_json TEXT');
+}

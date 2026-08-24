@@ -1,6 +1,13 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/authenticate.js';
-import { createClaim, listClaimsByRole, toPublicClaim } from '../models/claimModel.js';
+import {
+    createClaim,
+    listClaimsByRole,
+    findClaimByIdForRole,
+    updateClaimProgress,
+    markClaimSubmitted,
+    toPublicClaim,
+} from '../models/claimModel.js';
 
 const router = Router();
 
@@ -46,6 +53,50 @@ router.get('/api/v1/claims', (req, res) => {
     const filtered = status ? claims.filter((c) => c.status === status) : claims;
 
     return res.json({ claims: filtered, counts });
+});
+
+// GET /api/v1/claims/:id -- single claim, e.g. for InspectionDetailsPage /
+// DamageReviewPage to show the real insured/vehicle details instead of
+// hardcoded placeholders. Role-scoped: a claim from another portal 404s,
+// same as if it didn't exist -- doesn't leak whether the id is valid.
+router.get('/api/v1/claims/:id', (req, res) => {
+    const claim = findClaimByIdForRole(req.params.id, req.auth.role);
+    if (!claim) return res.status(404).json({ detail: 'Claim not found.' });
+    return res.json({ claim: toPublicClaim(claim) });
+});
+
+// PATCH /api/v1/claims/:id -- partial progress update. Used by
+// DocumentUploadPage (documents) and PhotoCaptureSelectionPage /
+// AddDamagePhotosPage (capturedAngles) to persist survey progress
+// server-side instead of only in the browser. Body: { documents?, capturedAngles? }
+// -- each replaces the whole corresponding object (the frontend sends its
+// full current state, not a diff).
+router.patch('/api/v1/claims/:id', (req, res) => {
+    const claim = findClaimByIdForRole(req.params.id, req.auth.role);
+    if (!claim) return res.status(404).json({ detail: 'Claim not found.' });
+
+    const { documents, capturedAngles } = req.body || {};
+    if (documents !== undefined && typeof documents !== 'object') {
+        return res.status(400).json({ detail: '"documents" must be an object.' });
+    }
+    if (capturedAngles !== undefined && typeof capturedAngles !== 'object') {
+        return res.status(400).json({ detail: '"capturedAngles" must be an object.' });
+    }
+
+    const updated = updateClaimProgress(req.params.id, { documents, capturedAngles });
+    return res.json({ claim: toPublicClaim(updated) });
+});
+
+// POST /api/v1/claims/:id/submit -- DamageReviewPage's "Submit Survey"
+// button. Marks the claim Completed with today's survey date -- this is
+// what actually moves a claim from the Dashboard's "Pending Survey" count
+// into "Survey Completed".
+router.post('/api/v1/claims/:id/submit', (req, res) => {
+    const claim = findClaimByIdForRole(req.params.id, req.auth.role);
+    if (!claim) return res.status(404).json({ detail: 'Claim not found.' });
+
+    const updated = markClaimSubmitted(req.params.id);
+    return res.json({ claim: toPublicClaim(updated) });
 });
 
 export default router;
