@@ -1,0 +1,20 @@
+{
+    "name": "ibima-claims-service",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Claims backend for car-damage-insurance-web-app's field portals -- Owner & Vehicle Details submissions create a claim here; each portal's Dashboard lists its own claims from here. Kept separate from ../server (AI ILA) and ../auth-service (login) -- own folder, own port, own DB file.",
+    "engines": {
+        "node": ">=22.5.0"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "seed": "node src/db/seed.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2"
+    }
+}
