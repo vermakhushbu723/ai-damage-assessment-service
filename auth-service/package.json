@@ -1,0 +1,20 @@
+{
+    "name": "ibima-auth-service",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Standalone login/auth backend for car-damage-insurance-web-app's role-based portals (claim-workshop, claim-surveyor, preinspection-agent, preinspection-surveyor). Kept fully separate from ../server (the AI ILA backend) so the two are easy to tell apart -- different folder, different port, different DB file, different PM2 process name.",
+    "engines": {
+        "node": ">=22.5.0"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "seed": "node src/db/seed.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2"
+    }
+}
