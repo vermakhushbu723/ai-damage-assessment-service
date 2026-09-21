@@ -33,5 +33,5 @@ export const PARTS = [
     'front_bumper', 'rear_bumper', 'bonnet', 'front_door_lh', 'front_door_rh',
     'rear_door_lh', 'rear_door_rh', 'fender_lh', 'fender_rh', 'headlamp_lh',
     'headlamp_rh', 'tail_light_lh', 'tail_light_rh', 'windshield_front',
-    'windshield_rear', 'roof', 'boot_lid',
+    'windshield_rear', 'roof', 'boot_lid', 'wheel_tyre',
 ];
