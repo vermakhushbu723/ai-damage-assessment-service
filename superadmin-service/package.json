@@ -1,0 +1,20 @@
+{
+    "name": "ibima-superadmin-service",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Backend for the IBima Assist Super Admin console (car-damage-insurance-superadmin): super admin login, organizations/vendors, SaaS plans, admin users, users, roles & permissions, password reset, user activation and audit logs. Separate from ../server (AI ILA), ../auth-service and ../claims-service -- own folder, port, database file and PM2 process.",
+    "engines": {
+        "node": ">=22.5.0"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "test:api": "node scripts/test-api.mjs"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2"
+    }
+}

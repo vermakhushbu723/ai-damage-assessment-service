@@ -45,6 +45,42 @@ isn't enough — supplementary group membership is only read at worker process s
 site 500s with "Permission denied" in `/var/log/nginx/error.log` on a path that looks readable,
 check this first.
 
+## superadmin-service (Super Admin console backend)
+
+Separate Node service in `superadmin-service/` (port **8030**, own `superadmin.db`, own JWT
+secret, PM2 name `superadmin-service`). It is **not** exposed on `api.ibimaassist.online`:
+nginx proxies `https://superadmin.ibimaassist.online/api/` to it, so the console calls its
+API on its own domain (no CORS, no new DNS record). See `superadmin-service/README.md`.
+
+First-time setup (as `deploy`):
+```bash
+cd /home/deploy/ai-damage-assessment-service && git pull
+cd superadmin-service && npm ci --omit=dev
+cp .env.example .env && nano .env
+#   JWT_SECRET=<long random>            (never reuse auth-service's)
+#   CORS_ORIGINS=https://superadmin.ibimaassist.online
+#   RESET_LINK_BASE=https://superadmin.ibimaassist.online/reset-password
+#   BOOTSTRAP_MASTER/SAAS/SP_PASSWORD=<strong passwords>  (only used on the very first start)
+chmod 600 .env
+pm2 start src/server.js --name superadmin-service && pm2 save
+curl -s http://127.0.0.1:8030/api/v1/health
+```
+
+nginx, inside the `server { ... 443 ... }` block of `/etc/nginx/sites-available/superadmin`:
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8030;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+then `sudo nginx -t && sudo systemctl reload nginx`.
+
+Redeploy: `git pull && cd superadmin-service && npm ci --omit=dev && pm2 restart superadmin-service`.
+Backup = copy `superadmin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
+
 ## Step 1 — Pick a VPS plan
 
 | Resource | Minimum | Recommended |

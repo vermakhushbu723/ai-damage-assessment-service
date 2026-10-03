@@ -1,0 +1,102 @@
+# superadmin-service
+
+Backend for the **IBima Assist Super Admin console**
+(`car-damage-insurance-superadmin`, live at https://superadmin.ibimaassist.online).
+
+Kept separate from everything else in this repo: its own folder, port (**8030**),
+SQLite file (`superadmin.db`), JWT secret and PM2 process (`superadmin-service`).
+
+| Service | Port | What it is |
+|---|---|---|
+| `server/` | 8000 | AI ILA backend |
+| `auth-service/` | 8010 | Field-portal logins |
+| `claims-service/` | 8020 | Field-portal claims |
+| **`superadmin-service/`** | **8030** | **Super Admin console** |
+
+Same stack as the other Node services: Express + Node's built-in `node:sqlite`
+(Node >= 22.5, no native builds), scrypt password hashing, HS256 JWT via `node:crypto`.
+
+## Layout
+
+```
+src/
+  server.js            boot: bootstrap() then listen on 127.0.0.1:PORT
+  app.js               express app, /api/v1 router, JSON error handler
+  config.js            env settings
+  constants.js         allowed values (org types, statuses, roles, permission matrix shape, default plans)
+  db/database.js       schema (all tables)
+  db/bootstrap.js      first start only: default plans, 4 system roles, 3 super admin logins
+  models/              SQL per table (admin users, organizations, users + reset tokens, plans, roles, audit)
+  routes/              one file per console area
+  middleware/          authenticate (re-checks the admin on every request), requireMaster
+  services/audit.js    writes the audit trail
+  utils/               jwt, password (scrypt), ids, http helpers/validation
+scripts/test-api.mjs   end-to-end API test on a throwaway database
+```
+
+## Run locally
+
+```bash
+cp .env.example .env      # set BOOTSTRAP_*_PASSWORD, or random ones are printed on first start
+npm install
+npm run dev               # http://127.0.0.1:8030/api/v1/health
+npm run test:api          # 80+ checks, uses its own temp DB (never touches superadmin.db)
+```
+
+The console's Vite dev server (`npm run dev` in car-damage-insurance-superadmin, port 5180)
+proxies `/api` here.
+
+## Data
+
+No sample data. On first start the service creates only:
+- the plan catalog (Starter / Professional / Enterprise / Custom),
+- roles: Super Admin (everything on), Organisation admin, Support admin, Reporting admin (view only),
+- three console logins, all role *Super Admin*: master (`scope: all`), SaaS (`scope: saas`),
+  Service Provider (`scope: serviceProvider`).
+
+Everything else (organizations, users, admin users, role changes) is created from the console.
+Restarting never overwrites existing rows.
+
+**Scopes.** A SaaS super admin only sees and manages SaaS organizations and their users;
+a Service Provider super admin only Service Provider ones. Only the master Super Admin
+(role *Super Admin* + scope *all*) can manage admin users and roles.
+
+## API (`/api/v1`, JSON, `Authorization: Bearer <token>` unless marked public)
+
+| Method | Path | Console screen |
+|---|---|---|
+| POST | `/auth/login` (public) `{ identifier: email or mobile, password }` | Login. 5 wrong passwords lock the account for 15 min |
+| GET | `/auth/me` | Session refresh |
+| POST | `/auth/logout`, `/auth/change-password` | |
+| GET / POST | `/organizations` | Organizations/Vendors list, Create Pilot/Working ID (also creates the org admin login, returns the temp password once) |
+| GET / PATCH | `/organizations/:id` | View, Edit & Modify Profile, inline Status/Subscription |
+| GET | `/plans` | SaaS Plans & Subscription |
+| PATCH | `/plans/:id` | Edit Plan |
+| POST | `/plans/:id/assign` `{ organizationIds }` | Select Plan |
+| GET / POST | `/admin-users` (POST master only) | Admin Users, + Add Admin User |
+| PATCH | `/admin-users/:id` (master) | inline Role/Status/MFA |
+| POST | `/admin-users/:id/reset-password` (master) | Reset an admin's password |
+| GET / POST | `/users` | Users, + Add User |
+| PATCH | `/users/:id` | inline Role/Status, User Activation |
+| POST | `/users/bulk-status` `{ ids, status }` | User Activation bulk action |
+| POST | `/users/verify` `{ userId, email, phone }` | Password Reset: Verify User |
+| POST | `/users/:id/reset-link` | Password Reset: Send Link (returns a one-time link) |
+| POST | `/users/:id/reset-password` `{ password, reason }` | Password Reset: Reset Manually |
+| GET | `/password-reset/:token` (public) | Reset link page |
+| POST | `/password-reset/confirm` (public) `{ token, password }` | Reset link page |
+| GET / POST | `/roles` (POST master) | Roles & Permission, + Create Role |
+| PUT | `/roles/:name/permissions` (master) | Save / Update matrix |
+| DELETE | `/roles/:name` (master) | Remove an unused custom role |
+| GET / POST | `/audit-logs` | Audit Logs (server writes entries for every change itself) |
+
+Errors are `{ "detail": "readable message" }` with a proper status (400 validation,
+401 not signed in, 403 not allowed, 404, 409 duplicate, 423 locked).
+
+**Email:** no mail server is configured, so "Send Link" returns the link for the admin
+to share instead of emailing it (`emailSent: false`).
+
+## Production
+
+See `../DEPLOYMENT.md` (section "superadmin-service"). nginx proxies
+`https://superadmin.ibimaassist.online/api/` to `127.0.0.1:8030`, so the console calls
+its API on the same domain (no CORS, no extra DNS).
