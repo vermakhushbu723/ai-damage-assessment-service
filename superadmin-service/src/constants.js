@@ -37,3 +37,108 @@ export const DEFAULT_PLANS = [
     { id: 'enterprise', name: 'Enterprise', price: 4999, userLimit: 'Unlimited Users', features: ['All Professional Features', 'Priority Support', 'API Access', 'Custom Integrations'] },
     { id: 'custom', name: 'Custom', price: null, priceLabel: 'Custom Pricing', userLimit: 'Tailored For Your Business', features: ['All Features', 'Dedicated Support', 'Custom Integrations'] },
 ];
+
+// ---------------- Service models ----------------
+export const SERVICE_TYPES = ['Claims', 'Policy', 'Survey', 'Customer Service'];
+export const APPLICABLE_FOR = ['Motor', 'Health', 'All', 'Motor, Health'];
+export const PRIORITIES = ['High', 'Medium', 'Low'];
+export const SERVICE_MODEL_STATUSES = ['Active', 'Pending', 'Suspended'];
+
+// ---------------- Claims ----------------
+export const CLAIM_STATUSES = ['Intimation', 'Survey', 'AI ILA', 'ILA', 'FLA', 'Settled', 'Rejected'];
+export const REGIONS = ['North', 'East', 'West', 'South', 'Central'];
+// Grouping used by the Claim Report KPI tiles.
+export const CLAIM_GROUPS = {
+    survey: ['Intimation', 'Survey'],
+    assessment: ['AI ILA', 'ILA', 'FLA'],
+    settlement: ['Settled'],
+    rejected: ['Rejected'],
+};
+
+// ---------------- Data Download ----------------
+export const DATA_TYPES = ['Claims', 'Users', 'Survey', 'Payments', 'Audit Logs', 'Organizations'];
+export const DOWNLOAD_FORMATS = ['csv', 'excel'];
+export const DOWNLOAD_TTL_DAYS = 7;
+
+// ---------------- Workflow (one default config per mode, created once) ----------------
+export const MODES = ['saas', 'serviceProvider'];
+export const MODE_OF_SERVICE_MODEL = { SaaS: 'saas', 'Service Provider': 'serviceProvider' };
+export const SERVICE_MODEL_OF_MODE = { saas: 'SaaS', serviceProvider: 'Service Provider' };
+
+const APPROVE_STAGES = ['FLA', 'Recommendation', 'Approval', 'Settlement', 'Fee Bill'];
+const rule = (stage, role, systemRule) => ({ stage, role, systemRule, enabled: true, view: true, edit: true, approve: APPROVE_STAGES.includes(stage) });
+const defaultTriggers = () => [
+    { id: 't1', trigger: 'Claim Registered', stage: 'Intimation', recipient: 'Insure/Handler', channels: 'Whatsapp+email', status: 'Active' },
+    { id: 't2', trigger: 'Surveyor Assigned', stage: 'Surveyor Allocation', recipient: 'Surveyor', channels: 'SMS+Whatsapp', status: 'Active' },
+    { id: 't3', trigger: 'Documents Pending', stage: 'Claim Details', recipient: 'Customer/Workshop', channels: 'Letter+email', status: 'Active' },
+    { id: 't4', trigger: 'ILA Submitted', stage: 'AI ILA', recipient: 'Handler/TCT', channels: 'In - app', status: 'Active' },
+    { id: 't5', trigger: 'Recommendation Ready', stage: 'Recommendation', recipient: 'Approver', channels: 'In - app+email', status: 'Active' },
+];
+
+export const DEFAULT_WORKFLOWS = {
+    saas: {
+        journeyTitle: 'Claim Journey - SaaS',
+        banner: 'SaaS: Surveyor Allocation, Recommendation & Approval Are Enabled. Fee Bill Is Not Applicable',
+        stages: ['Intimation', 'Handler Allocation', 'Surveyor Allocation', 'Claim Details', 'AI ILA', 'Handler ILA', 'FLA', 'Recommendation', 'Approval', 'Settlement'],
+        rules: [
+            rule('Intimation', 'Call Center', 'Insurer Control'),
+            rule('Handler Allocation', 'National Manager', 'Insurer Control'),
+            rule('Surveyor Allocation', 'Internal Surveyor', 'Insurer Control'),
+            rule('Claim Details', 'Claim Handler', 'Insurer Control'),
+            rule('AI ILA', 'TCT', 'Insurer Control'),
+            rule('Handler ILA', 'Claim Handler', 'Insurer Control'),
+            rule('FLA', 'Sr TCT', 'Insurer Control'),
+            rule('Recommendation', 'National Manager', 'Insurer Control'),
+            rule('Approval', 'HO/Admin', 'Insurer Control'),
+            rule('Settlement', 'HO/Admin', 'Insurer Control'),
+        ],
+        overview: { operatingModel: 'SaaS-Insurer operates claim', insurer: null, adminProfile: 'HO/National Manager', feeBillModel: 'Not Applicable-SaaS' },
+        triggers: defaultTriggers(),
+        autoRoles: ['TCT', 'Sr TCT'],
+        activatedAt: null,
+    },
+    serviceProvider: {
+        journeyTitle: 'Claim Journey - As Service Provider',
+        banner: 'As Service Provider: Surveyor Allocation, Recommendation And Payment Approval Are Hidden. Fee Bill Is Enabled.',
+        stages: ['Intimation', 'Handler Allocation', 'Claim Details', 'AI ILA', 'Handler ILA', 'FLA', 'Fee Bill'],
+        rules: [
+            rule('Intimation', 'Call Center', 'Vendor service stage'),
+            rule('Handler Allocation', 'National Manager', 'Vendor service stage'),
+            rule('Claim Details', 'Claim Handler', 'Vendor service stage'),
+            rule('AI ILA', 'AI assesment', 'Vendor service stage'),
+            rule('Handler ILA', 'Claim Handler', 'Vendor service stage'),
+            rule('FLA', 'Sr Technical reviewer', 'Vendor service stage'),
+            rule('Fee Bill', 'National Manager', 'Vendor service stage'),
+        ],
+        overview: { operatingModel: 'IBima assist service workflow', insurer: null, adminProfile: 'HO/National Manager', feeBillModel: 'Automatic-based on product model' },
+        triggers: defaultTriggers().filter((t) => !['Surveyor Allocation', 'Recommendation'].includes(t.stage)),
+        autoRoles: ['TCT', 'Sr TCT'],
+        activatedAt: null,
+    },
+};
+export const OPERATING_MODELS = ['SaaS-Insurer operates claim', 'IBima assist service workflow'];
+export const ADMIN_PROFILES = ['HO/National Manager', 'Regional Manager', 'Branch Manager'];
+export const FEE_BILL_MODELS = ['Automatic-based on product model', 'Manual entry', 'Not Applicable-SaaS'];
+export const CHANNELS = ['Whatsapp', 'email', 'SMS', 'Letter', 'In - app'];
+export const AUTO_ROLES = ['TCT', 'Sr TCT', 'Claim Handler', 'Internal Surveyor', 'National Manager', 'HO/Admin'];
+
+// ---------------- System Settings ----------------
+// Integrations start "Not Configured": no endpoint until an admin enters the real one.
+export const DEFAULT_INTEGRATIONS = [
+    { id: 'policy-los', name: 'Policy/LOS API', description: 'Policy - Customer & Claim Data', type: 'Reset API', environment: 'Production' },
+    { id: 'vehicle-rc', name: 'Vehicle/RC Verification', description: 'Vehicle & Registration Verification', type: 'API', environment: 'Production' },
+    { id: 'comm-gateway', name: 'Communication Gateway', description: 'SMS/Email/Whatsapp', type: 'Gateway', environment: 'Production' },
+];
+export const INTEGRATION_TYPES = ['Reset API', 'API', 'Gateway', 'Webhook'];
+export const ENVIRONMENTS = ['Production', 'UAT', 'Sandbox'];
+export const RETENTION_OPTIONS = ['1 Year', '3 Years', '5 Years', '7 Years', '10 Years'];
+export const DEFAULT_SYSTEM_SETTINGS = {
+    environment: 'Production Environment',
+    maintenanceApproval: false,
+    autoSecurityPatches: false,
+    maintenanceMode: false,
+    auditLogin: true,
+    retention: '7 Years',
+    inputActivityLogging: false,
+    configChangeApproval: false,
+};

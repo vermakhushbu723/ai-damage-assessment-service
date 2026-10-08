@@ -9,6 +9,7 @@ import {
 } from '../models/adminUserModel.js';
 import { findRole } from '../models/roleModel.js';
 import { audit } from '../services/audit.js';
+import { getSystemSettings } from '../models/systemModel.js';
 
 const router = Router();
 
@@ -46,6 +47,8 @@ router.post('/login', asyncHandler(async (req, res) => {
             : `Invalid email/mobile number or password. ${settings.maxFailedLogins - failed} attempt(s) left.`);
     }
     if (row.status !== 'Active') fail(`This account is ${row.status.toLowerCase()}. Contact the master Super Admin.`, 403);
+    // Maintenance Mode (System Settings): only the master Super Admin can sign in.
+    if (getSystemSettings().maintenanceMode && !isMaster(toAdminDto(row))) fail('The console is under maintenance. Please try again later.', 503);
 
     recordLoginSuccess(row.id);
     const admin = toAdminDto(findAdminRowById(row.id));

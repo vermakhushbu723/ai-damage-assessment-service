@@ -2,6 +2,7 @@
 // (nothing touches superadmin.db), exercises every endpoint, then deletes
 // the temp database.  Run: npm run test:api
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -24,12 +25,27 @@ const server = spawn(process.execPath, ['src/server.js'], {
         BOOTSTRAP_SAAS_EMAIL: 'saas@test.in', BOOTSTRAP_SAAS_PASSWORD: PW.saas,
         BOOTSTRAP_SP_EMAIL: 'sp@test.in', BOOTSTRAP_SP_PASSWORD: PW.sp,
         RESET_LINK_BASE: 'http://localhost/reset-password',
+        CLAIMS_INGEST_KEY: 'test-ingest-key',
+        APP_VERSION: 'v2.4.1',
+        LATEST_VERSION: 'v2.4.2',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serverLog = '';
 server.stdout.on('data', (d) => { serverLog += d; });
 server.stderr.on('data', (d) => { serverLog += d; });
+
+const INGEST_KEY = 'test-ingest-key';
+// Stand-in for an external API, used by the integration "Test" checks.
+let lastMockAuth = null;
+const mock = http.createServer((req, res) => {
+    lastMockAuth = req.headers.authorization ?? null;
+    if (req.url === '/slow') return setTimeout(() => res.end('ok'), 2300);
+    if (req.url === '/boom') { res.statusCode = 500; return res.end('err'); }
+    return res.end('ok');
+});
+await new Promise((r) => mock.listen(8042, '127.0.0.1', r));
+const mockUrl = 'http://127.0.0.1:8042';
 
 let pass = 0;
 let fail = 0;
@@ -281,6 +297,183 @@ try {
     check('audit: filters', r.data.length === 2 && r.data.every((l) => l.module === 'Organizations'));
     check('audit: device + ip captured', logs.every((l) => l.device && l.ip));
 
+    // ================= Service configuration, reports and system =================
+
+    // ---------------- Service models ----------------
+    const smBody = { name: 'Motor Claims', serviceType: 'Claims', applicableFor: 'Motor', description: 'Own damage', sla: 48, workingHours: '09:00 AM - 06:00 PM', escalationAfter: '24 Hours', escalationTo: 'Senior Claims Manager', priority: 'High' };
+    r = await call('GET', '/service-models', { token: master });
+    check('service models: start empty', r.status === 200 && r.data.length === 0);
+    r = await call('POST', '/service-models', { token: master, body: smBody });
+    check('service models: create -> SM-101 Active', r.status === 201 && r.data.id === 'SM-101' && r.data.status === 'Active' && r.data.sla === 48, JSON.stringify(r.data));
+    r = await call('POST', '/service-models', { token: master, body: { ...smBody, name: 'motor claims' } });
+    check('service models: duplicate name -> 409', r.status === 409);
+    r = await call('POST', '/service-models', { token: master, body: { ...smBody, name: 'Bad Hours', workingHours: '9 to 6' } });
+    check('service models: bad working hours -> 400', r.status === 400);
+    r = await call('POST', '/service-models', { token: master, body: { ...smBody, name: 'No Type', serviceType: 'Gold' } });
+    check('service models: bad service type -> 400', r.status === 400);
+    r = await call('PATCH', '/service-models/SM-101', { token: master, body: { status: 'Suspended', sla: 72 } });
+    check('service models: update status + SLA', r.status === 200 && r.data.status === 'Suspended' && r.data.sla === 72);
+    r = await call('GET', '/service-models/SM-999', { token: master });
+    check('service models: unknown id -> 404', r.status === 404);
+
+    // ---------------- Workflows ----------------
+    r = await call('GET', '/workflows', { token: master });
+    check('workflows: master gets both modes', r.status === 200 && r.data.saas.stages.length === 10 && r.data.serviceProvider.stages.length === 7 && r.data.options.channels.length === 5);
+    check('workflows: live stats', r.data.saas.stats.stages === 10 && r.data.saas.stats.users === 2 && r.data.serviceProvider.stats.users === 2, JSON.stringify(r.data.saas.stats));
+    const saasRules = r.data.saas.rules;
+    r = await call('GET', '/workflows', { token: sp });
+    check('workflows: SP admin only sees SP workflow', r.status === 200 && !r.data.saas && r.data.serviceProvider);
+    r = await call('PATCH', '/workflows/saas', { token: sp, body: { autoRoles: ['TCT'] } });
+    check('workflows: SP admin cannot change SaaS workflow -> 403', r.status === 403);
+    const rules = saasRules.map((x) => (x.stage === 'Approval' ? { ...x, enabled: false, view: true } : x));
+    r = await call('PATCH', '/workflows/saas', { token: master, body: { rules } });
+    const approval = r.data.rules.find((x) => x.stage === 'Approval');
+    check('workflows: save rules (disabled stage loses rights)', r.status === 200 && approval.enabled === false && approval.view === false && r.data.stats.stages === 9);
+    r = await call('PATCH', '/workflows/saas', { token: master, body: { rules: rules.slice(1) } });
+    check('workflows: incomplete rules -> 400', r.status === 400);
+    r = await call('PATCH', '/workflows/saas', { token: master, body: { overview: { insurer: 'Test General Insurance', adminProfile: 'Regional Manager' } } });
+    check('workflows: business model saved', r.status === 200 && r.data.overview.insurer === 'Test General Insurance' && r.data.overview.adminProfile === 'Regional Manager');
+    r = await call('PATCH', '/workflows/saas', { token: master, body: { overview: { insurer: 'Nobody Ltd' } } });
+    check('workflows: unknown insurer -> 400', r.status === 400);
+    r = await call('PATCH', '/workflows/saas', { token: master, body: { overview: { feeBillModel: 'Manual entry' } } });
+    check('workflows: SaaS rejects fee bill model', r.status === 400);
+    r = await call('PATCH', '/workflows/serviceProvider', { token: master, body: { autoRoles: ['TCT', 'Sr TCT', 'Claim Handler'] } });
+    check('workflows: auto roles saved', r.status === 200 && r.data.autoRoles.length === 3);
+    r = await call('PATCH', '/workflows/serviceProvider', { token: master, body: { autoRoles: ['CEO'] } });
+    check('workflows: unknown auto role -> 400', r.status === 400);
+    r = await call('POST', '/workflows/serviceProvider/triggers', { token: master, body: { trigger: 'Fee Bill Raised', stage: 'Fee Bill', recipient: 'Insurer', channels: ['email', 'SMS'] } });
+    const trig = r.data.triggers?.find((t) => t.trigger === 'Fee Bill Raised');
+    check('workflows: add trigger', r.status === 201 && trig && trig.channels === 'email+SMS' && trig.status === 'Active');
+    r = await call('POST', '/workflows/serviceProvider/triggers', { token: master, body: { trigger: 'X', stage: 'Approval', recipient: 'Y', channels: ['email'] } });
+    check('workflows: trigger stage must exist in mode', r.status === 400);
+    r = await call('PATCH', `/workflows/serviceProvider/triggers/${trig.id}`, { token: master, body: { status: 'Inactive', channels: ['Whatsapp'] } });
+    check('workflows: edit trigger', r.status === 200 && r.data.triggers.find((t) => t.id === trig.id).status === 'Inactive');
+    r = await call('POST', '/workflows/serviceProvider/activate', { token: master });
+    check('workflows: activate', r.status === 200 && r.data.activatedAt && r.data.activatedBy);
+
+    // ---------------- Claims ----------------
+    r = await call('POST', '/claims/ingest', { body: { claims: [{ id: 'X', customer: 'A', status: 'Survey', intimationDate: '2026-10-01' }] } });
+    check('claims ingest: no key -> 401', r.status === 401);
+    r = await fetch(`${BASE}/claims/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': 'wrong' }, body: '{}' });
+    check('claims ingest: wrong key -> 401', r.status === 401);
+    const ingest = async (claims) => {
+        const res = await fetch(`${BASE}/claims/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': INGEST_KEY, 'X-Service-Name': 'test' }, body: JSON.stringify({ claims }) });
+        return { status: res.status, data: await res.json() };
+    };
+    const today = new Date().toISOString();
+    r = await ingest([
+        { id: 'CLM-1', organizationId: org1.id, customer: 'Rohit Sharma', claimType: 'Motor Vehicle', handler: 'Rajive', amount: 85000, slaDays: 2, status: 'Survey', intimationDate: today, region: 'North', branch: 'Mumbai HQ' },
+        { id: 'CLM-2', organizationId: org1.id, customer: 'Priya Patel', amount: 120000, status: 'Settled', intimationDate: today, settledAt: today, region: 'West' },
+        { id: 'CLM-3', organizationId: org2.id, customer: 'Amit Kumar', amount: 40000, status: 'AI ILA', intimationDate: today, region: 'South' },
+    ]);
+    check('claims ingest: service key creates 3', r.status === 201 && r.data.created === 3, JSON.stringify(r.data));
+    r = await ingest([{ id: 'CLM-1', organizationId: org1.id, customer: 'Rohit Sharma', amount: 90000, status: 'FLA', intimationDate: today }]);
+    check('claims ingest: same id updates', r.status === 201 && r.data.updated === 1);
+    r = await ingest([{ id: 'CLM-9', customer: 'Bad', status: 'Lost', intimationDate: today }]);
+    check('claims ingest: invalid status -> 400', r.status === 400 && /Claim #1/.test(r.data.detail));
+    r = await ingest([{ id: 'CLM-9', organizationId: 'ORG-9999', customer: 'Bad', status: 'Survey', intimationDate: today }]);
+    check('claims ingest: unknown organization -> 400', r.status === 400);
+    r = await call('POST', '/claims/ingest', { token: saas, body: { claims: [{ id: 'CLM-8', customer: 'Z', status: 'Survey', intimationDate: today }] } });
+    check('claims ingest: non-master token -> 403', r.status === 403);
+    r = await call('GET', '/claims', { token: master });
+    check('claims: master sees all 3', r.status === 200 && r.data.length === 3 && r.data.find((c) => c.id === 'CLM-1').status === 'FLA' && r.data.find((c) => c.id === 'CLM-1').organization === org1.name);
+    r = await call('GET', '/claims', { token: sp });
+    check('claims: SP admin sees only SP claims', r.data.length === 1 && r.data[0].id === 'CLM-3');
+    r = await call('GET', '/claims/CLM-1', { token: sp });
+    check('claims: SP admin cannot open SaaS claim -> 404', r.status === 404);
+    r = await call('GET', `/organizations/${org1.id}`, { token: master });
+    check('orgs: claims count is live', r.data.claims === 2);
+
+    // ---------------- Data Download ----------------
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Claims', format: 'csv' } });
+    check('downloads: generate claims CSV', r.status === 201 && r.data.rows === 3 && r.data.status === 'Ready' && r.data.fileName.startsWith('Claims_'), JSON.stringify(r.data));
+    const dl = r.data;
+    let res = await fetch(`${BASE}/downloads/${dl.id}/file`, { headers: { Authorization: `Bearer ${master}` } });
+    const csv = await res.text();
+    check('downloads: file is real CSV', res.status === 200 && res.headers.get('content-type').includes('text/csv') && csv.includes('Claim ID') && csv.includes('CLM-2') && csv.split('\r\n').filter(Boolean).length === 4);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Payments', format: 'excel' } });
+    check('downloads: payments = settled claims only', r.status === 201 && r.data.rows === 1);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Users', format: 'csv', organizationId: org2.id } });
+    check('downloads: organization filter', r.status === 201 && r.data.rows === 2);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Claims', format: 'csv', from: '2020-01-01', to: '2020-01-31' } });
+    check('downloads: empty range -> 422', r.status === 422);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Claims', format: 'csv', from: '2026-10-05', to: '2026-10-01' } });
+    check('downloads: end before start -> 400', r.status === 400);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Secrets', format: 'csv' } });
+    check('downloads: unknown data type -> 400', r.status === 400);
+    r = await call('POST', '/downloads', { token: sp, body: { dataType: 'Claims', format: 'csv' } });
+    check('downloads: SP admin export only has SP claims', r.status === 201 && r.data.rows === 1);
+    r = await call('GET', '/downloads', { token: master });
+    check('downloads: history newest first', r.status === 200 && r.data.length === 4 && r.data[0].generatedBy);
+    await ingest([{ id: 'CLM-4', organizationId: org1.id, customer: '=HYPERLINK("x")', status: 'Survey', intimationDate: today }]);
+    r = await call('POST', '/downloads', { token: master, body: { dataType: 'Claims', format: 'csv' } });
+    res = await fetch(`${BASE}/downloads/${r.data.id}/file`, { headers: { Authorization: `Bearer ${master}` } });
+    check('downloads: formula injection neutralised', (await res.text()).includes(`"'=HYPERLINK(""x"")"`));
+
+    // ---------------- Reports ----------------
+    r = await call('GET', '/reports/usage', { token: master });
+    const u = r.data;
+    check('reports: usage shape', r.status === 200 && u.heatmap.values.length === 6 && u.heatmap.values[0].length === 12 && u.dauMau.length === 9 && u.alertsTrend.length === 9);
+    check('reports: sessions counted from real logins', u.sessions.last30 >= 5 && u.dauMau[8].dau >= 3, JSON.stringify(u.sessions));
+    check('reports: api requests counted', u.apiRequests.last30 > 50);
+    check('reports: module usage from audit trail', u.moduleUsage.some((m) => m.module === 'Organizations' && m.sessions >= 2));
+    check('reports: failed actions in alerts trend', u.alertsTrend[8].value >= 3);
+    check('reports: storage size', u.storageBytes > 10000);
+
+    // ---------------- Integrations ----------------
+    r = await call('GET', '/integrations', { token: master });
+    check('integrations: 3, not configured', r.status === 200 && r.data.length === 3 && r.data.every((i) => i.status === 'Not Configured' && !i.endpoint));
+    r = await call('POST', '/integrations/policy-los/test', { token: master });
+    check('integrations: test without endpoint -> 400', r.status === 400);
+    r = await call('PATCH', '/integrations/policy-los', { token: sp, body: { endpoint: `${mockUrl}/ok` } });
+    check('integrations: non-master cannot configure -> 403', r.status === 403);
+    r = await call('PATCH', '/integrations/policy-los', { token: master, body: { endpoint: 'ftp://x' } });
+    check('integrations: non-http endpoint -> 400', r.status === 400);
+    r = await call('PATCH', '/integrations/policy-los', { token: master, body: { endpoint: `${mockUrl}/ok`, apiKey: 'secret-key-1', environment: 'UAT' } });
+    check('integrations: configure (key hidden)', r.status === 200 && r.data.status === 'Not Tested' && r.data.hasApiKey && !JSON.stringify(r.data).includes('secret-key-1'));
+    r = await call('POST', '/integrations/policy-los/test', { token: master });
+    check('integrations: test -> Connected + key sent', r.status === 200 && r.data.status === 'Connected' && r.data.responseMs >= 0 && lastMockAuth === 'Bearer secret-key-1', `${r.data.status} ${lastMockAuth}`);
+    await call('PATCH', '/integrations/vehicle-rc', { token: master, body: { endpoint: `${mockUrl}/slow` } });
+    r = await call('POST', '/integrations/vehicle-rc/test', { token: master });
+    check('integrations: slow endpoint -> Warning', r.data.status === 'Warning' && /Slow/.test(r.data.lastError));
+    await call('PATCH', '/integrations/comm-gateway', { token: master, body: { endpoint: `${mockUrl}/boom` } });
+    r = await call('POST', '/integrations/comm-gateway/test', { token: master });
+    check('integrations: 500 -> Failed', r.data.status === 'Failed' && r.data.lastError === 'HTTP 500');
+    await call('PATCH', '/integrations/comm-gateway', { token: master, body: { endpoint: 'http://127.0.0.1:1/' } });
+    r = await call('POST', '/integrations/comm-gateway/test', { token: master });
+    check('integrations: unreachable -> Failed', r.data.status === 'Failed' && r.data.lastError);
+
+    // ---------------- System ----------------
+    r = await call('GET', '/system', { token: master });
+    check('system: version + first deployment', r.status === 200 && r.data.currentVersion === 'v2.4.1' && r.data.latestVersion === 'v2.4.2' && r.data.upToDate === false && r.data.deployments.length === 1);
+    check('system: activity from integration changes', r.data.activity.some((a) => a.module === 'API Integration'));
+    r = await call('PATCH', '/system/settings', { token: sp, body: { maintenanceMode: true } });
+    check('system: non-master cannot change settings -> 403', r.status === 403);
+    r = await call('PATCH', '/system/settings', { token: master, body: { maintenanceApproval: true } });
+    r = await call('POST', '/system/update', { token: master });
+    check('system: update blocked without maintenance mode', r.status === 400 && /Maintenance Mode/.test(r.data.detail));
+    r = await call('PATCH', '/system/settings', { token: master, body: { maintenanceMode: true } });
+    check('system: maintenance mode ON logged', r.status === 200 && r.data.maintenanceMode === true && r.data.activity[0].activity === 'Maintenance mode ON');
+    r = await call('POST', '/auth/login', { body: { identifier: 'sp@test.in', password: 'Another@123' } });
+    check('system: maintenance blocks non-master login -> 503', r.status === 503);
+    r = await call('POST', '/auth/login', { body: { identifier: 'master@test.in', password: PW.master } });
+    check('system: master can still log in during maintenance', r.status === 200);
+    r = await call('POST', '/system/update', { token: master });
+    check('system: update to v2.4.2 recorded', r.status === 200 && r.data.currentVersion === 'v2.4.2' && r.data.upToDate && r.data.deployments[0].version === 'v2.4.2');
+    r = await call('POST', '/system/update', { token: master });
+    check('system: second update says up to date', r.status === 200 && /latest/.test(r.data.message));
+    r = await call('PATCH', '/system/settings', { token: master, body: { maintenanceMode: false, configChangeApproval: true } });
+    r = await call('PATCH', '/system/settings', { token: master, body: { retention: '3 Years' } });
+    check('system: retention change needs approval when enabled', r.data.retention === '3 Years' && r.data.activity[0].activity === 'Change Retention policy to 3 Years' && r.data.activity[0].status === 'Approval Log');
+    r = await call('PATCH', '/system/settings', { token: master, body: { retention: '2 Years' } });
+    check('system: invalid retention -> 400', r.status === 400);
+    const loginsBefore = (await call('GET', '/audit-logs?action=Login', { token: master })).data.length;
+    await call('PATCH', '/system/settings', { token: master, body: { auditLogin: false } });
+    await call('POST', '/auth/login', { body: { identifier: 'master@test.in', password: PW.master } });
+    const loginsAfter = (await call('GET', '/audit-logs?action=Login', { token: master })).data.length;
+    check('system: audit login OFF stops recording sign-ins', loginsAfter === loginsBefore);
+    await call('PATCH', '/system/settings', { token: master, body: { auditLogin: true } });
+
     // ---------------- Misc ----------------
     r = await fetch(`${BASE}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${master}` }, body: '{bad json' });
     check('malformed JSON -> 400', r.status === 400);
@@ -291,6 +484,7 @@ try {
     console.error('Test run crashed:', err);
 } finally {
     server.kill();
+    mock.close();
     await new Promise((r) => setTimeout(r, 300));
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* Windows may hold the WAL file briefly */ }
     console.log(`\n${pass} passed, ${fail} failed`);

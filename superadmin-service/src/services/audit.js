@@ -1,4 +1,5 @@
 import { insertAuditLog } from '../models/auditModel.js';
+import { getSystemSettings } from '../models/systemModel.js';
 
 // "Chrome / Windows" style device label from the User-Agent header.
 function deviceOf(userAgent = '') {
@@ -20,6 +21,8 @@ function ipOf(req) {
  * signed-in admin; pass one explicitly for logins (no req.admin yet).
  */
 export function audit(req, { action, module, status = 'Success', detail = null, actor = req.admin }) {
+    // System Settings > Audit Login OFF: sign-ins/outs are not recorded (admin actions always are).
+    if ((action === 'Login' || action === 'Logout') && !getSystemSettings().auditLogin) return;
     insertAuditLog({
         actorId: actor?.id ?? null,
         actorName: actor?.name ?? 'Unknown',

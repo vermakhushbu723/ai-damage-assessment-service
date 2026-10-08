@@ -18,6 +18,12 @@ export const settings = {
         : toList(process.env.CORS_ORIGINS || 'http://localhost:5180,http://127.0.0.1:5180,http://localhost:4180'),
     resetLinkBase: process.env.RESET_LINK_BASE || 'http://localhost:5180/reset-password',
     resetLinkTtlHours: Number(process.env.RESET_LINK_TTL_HOURS || 24),
+    // Shared secret other services send as X-Service-Key to push claims (POST /api/v1/claims/ingest). Empty = disabled.
+    claimsIngestKey: process.env.CLAIMS_INGEST_KEY || '',
+    // System Settings > System Update: version running now / newest released version.
+    appVersion: process.env.APP_VERSION || 'v2.4.1',
+    latestVersion: process.env.LATEST_VERSION || process.env.APP_VERSION || 'v2.4.1',
+    latestReleaseDate: process.env.LATEST_RELEASE_DATE || null,
     // Failed-login lockout.
     maxFailedLogins: 5,
     lockMinutes: 15,

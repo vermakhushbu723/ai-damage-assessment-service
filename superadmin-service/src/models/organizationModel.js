@@ -21,7 +21,7 @@ export const toOrgDto = (r) => r && ({
     subscriptionExpiry: r.subscription_expiry,
     adminLoginId: r.admin_login_id,
     users: r.users_count ?? 0,
-    claims: r.claims_count ?? 0,
+    claims: r.live_claims ?? 0,
     workflow: parse(r.workflow),
     settings: parse(r.settings),
     form: parse(r.form),
@@ -30,7 +30,10 @@ export const toOrgDto = (r) => r && ({
     updatedOn: r.updated_at,
 });
 
-const SELECT = `SELECT o.*, (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS users_count FROM organizations o`;
+const SELECT = `SELECT o.*,
+    (SELECT COUNT(*) FROM users u WHERE u.organization_id = o.id) AS users_count,
+    (SELECT COUNT(*) FROM claims c WHERE c.organization_id = o.id) AS live_claims
+    FROM organizations o`;
 
 /** serviceModel = null -> every organization; otherwise only that service model's. */
 export function listOrganizations(serviceModel = null) {

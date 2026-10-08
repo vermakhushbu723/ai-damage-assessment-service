@@ -9,6 +9,14 @@ import usersRouter from './routes/users.js';
 import rolesRouter from './routes/roles.js';
 import passwordResetRouter from './routes/passwordReset.js';
 import auditLogsRouter from './routes/auditLogs.js';
+import serviceModelsRouter from './routes/serviceModels.js';
+import workflowsRouter from './routes/workflows.js';
+import claimsRouter from './routes/claims.js';
+import downloadsRouter from './routes/downloads.js';
+import reportsRouter from './routes/reports.js';
+import integrationsRouter from './routes/integrations.js';
+import systemRouter from './routes/system.js';
+import { countApiRequest } from './models/systemModel.js';
 
 export const app = express();
 
@@ -19,6 +27,13 @@ app.use(cors({ origin: settings.corsOrigins, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
 const api = express.Router();
+// "API Usage" on the SaaS Usage Report = requests per day.
+api.use((req, _res, next) => {
+    if (req.path !== '/health') {
+        try { countApiRequest(); } catch { /* never fail a request over the counter */ }
+    }
+    next();
+});
 api.use('/auth', authRouter);
 api.use('/organizations', organizationsRouter);
 api.use('/plans', plansRouter);
@@ -27,6 +42,13 @@ api.use('/users', usersRouter);
 api.use('/roles', rolesRouter);
 api.use('/password-reset', passwordResetRouter);
 api.use('/audit-logs', auditLogsRouter);
+api.use('/service-models', serviceModelsRouter);
+api.use('/workflows', workflowsRouter);
+api.use('/claims', claimsRouter);
+api.use('/downloads', downloadsRouter);
+api.use('/reports', reportsRouter);
+api.use('/integrations', integrationsRouter);
+api.use('/system', systemRouter);
 api.get('/health', (_req, res) => res.json({ status: 'ok', service: 'superadmin-service' }));
 api.use((_req, res) => res.status(404).json({ detail: 'Not found.' }));
 

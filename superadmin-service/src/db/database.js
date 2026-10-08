@@ -116,6 +116,117 @@ db.exec(`
         device TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(timestamp);
+
+    -- Service Model page.
+    CREATE TABLE IF NOT EXISTS service_models (
+        id TEXT PRIMARY KEY,                      -- SM-101, SM-102, ...
+        name TEXT NOT NULL,
+        service_type TEXT NOT NULL,
+        applicable_for TEXT NOT NULL,
+        description TEXT,
+        sla_hours INTEGER NOT NULL,
+        working_hours TEXT NOT NULL,
+        escalation_after TEXT NOT NULL,
+        escalation_to TEXT NOT NULL,
+        priority TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Active',
+        created_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    -- Claim Workflow & Role Configuration: one row per mode (saas | serviceProvider).
+    CREATE TABLE IF NOT EXISTS workflow_configs (
+        mode TEXT PRIMARY KEY,
+        config TEXT NOT NULL,                     -- JSON: stages, rules, overview, triggers, autoRoles, activatedAt
+        updated_by TEXT,
+        updated_at TEXT NOT NULL
+    );
+
+    -- Claims shown in the reports. Pushed in by the claim systems (POST /claims/ingest).
+    CREATE TABLE IF NOT EXISTS claims (
+        id TEXT PRIMARY KEY,                      -- the claim number from the source system
+        organization_id TEXT REFERENCES organizations(id),
+        customer TEXT NOT NULL,
+        claim_type TEXT,
+        product_type TEXT,
+        handler TEXT,
+        amount INTEGER NOT NULL DEFAULT 0,
+        sla_days INTEGER,
+        status TEXT NOT NULL,                     -- Intimation | Survey | AI ILA | ILA | FLA | Settled | Rejected ...
+        intimation_date TEXT NOT NULL,
+        settled_at TEXT,
+        branch TEXT,
+        region TEXT,
+        state TEXT,
+        source TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_org ON claims(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_claims_date ON claims(intimation_date);
+
+    -- Data Download history; the generated CSV is kept until it expires.
+    CREATE TABLE IF NOT EXISTS downloads (
+        id TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        data_type TEXT NOT NULL,
+        format TEXT NOT NULL,
+        params TEXT NOT NULL DEFAULT '{}',
+        row_count INTEGER NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        content TEXT,                             -- NULL once expired
+        created_by TEXT,
+        created_by_name TEXT,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+    );
+
+    -- System Settings > API Integration.
+    CREATE TABLE IF NOT EXISTS integrations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        type TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        endpoint TEXT,
+        api_key TEXT,
+        status TEXT NOT NULL DEFAULT 'Not Configured',   -- Not Configured | Connected | Warning | Failed
+        last_response_ms INTEGER,
+        last_error TEXT,
+        last_sync TEXT,
+        updated_at TEXT NOT NULL
+    );
+
+    -- System Settings switches + version info (key -> JSON value).
+    CREATE TABLE IF NOT EXISTS system_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    -- System Update / Audit & Compliance activity table and deployment history.
+    CREATE TABLE IF NOT EXISTS system_activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        user TEXT NOT NULL,
+        activity TEXT NOT NULL,
+        module TEXT NOT NULL,                     -- API Integration | System Update | Compliance
+        status TEXT NOT NULL                      -- Success | Failed | Approval Log
+    );
+    CREATE TABLE IF NOT EXISTS deployments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        version TEXT NOT NULL,
+        date TEXT NOT NULL,
+        by_name TEXT NOT NULL,
+        status TEXT NOT NULL
+    );
+
+    -- Requests per day (SaaS Usage Report "API Usage").
+    CREATE TABLE IF NOT EXISTS api_usage (
+        day TEXT PRIMARY KEY,                     -- YYYY-MM-DD
+        requests INTEGER NOT NULL DEFAULT 0
+    );
 `);
 
 /** Run fn inside a transaction (node:sqlite has no helper for it). */
