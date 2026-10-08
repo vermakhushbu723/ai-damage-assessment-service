@@ -1,0 +1,20 @@
+{
+    "name": "ibima-admin-service",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Backend for the IBima Assist Admin portal (car-damage-insurance-admin): admin login, users, roles & permissions, password reset, user activation, branches, templates, communication setup, claim configuration, fraud controls, reports, data download, audit logs and system settings. Separate from ../superadmin-service -- own folder, port, database file and PM2 process.",
+    "engines": {
+        "node": ">=22.5.0"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "test:api": "node scripts/test-api.mjs"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "dotenv": "^16.4.5",
+        "express": "^4.19.2"
+    }
+}

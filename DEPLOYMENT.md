@@ -81,6 +81,45 @@ then `sudo nginx -t && sudo systemctl reload nginx`.
 Redeploy: `git pull && cd superadmin-service && npm ci --omit=dev && pm2 restart superadmin-service`.
 Backup = copy `superadmin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
 
+## admin-service (Admin portal backend)
+
+Separate Node service in `admin-service/` (port **8040**, own `admin.db`, own JWT secret,
+PM2 name `admin-service`). nginx proxies `https://admin.ibimaassist.online/api/` to it, so
+the portal calls its API on its own domain. See `admin-service/README.md`.
+
+First-time setup (as `deploy`):
+```bash
+cd /home/deploy/ai-damage-assessment-service && git pull
+cd admin-service && npm ci --omit=dev
+cp .env.example .env && nano .env
+#   JWT_SECRET=<long random>            (never reuse another service's)
+#   CORS_ORIGINS=https://admin.ibimaassist.online
+#   RESET_LINK_BASE=https://admin.ibimaassist.online/reset-password
+#   ORGANIZATION_NAME=<the insurer>
+#   BOOTSTRAP_ADMIN_EMAIL / _MOBILE / _PASSWORD   (only used on the very first start)
+#   CLAIMS_INGEST_KEY=<long random>     (give it to the claim systems)
+chmod 600 .env
+pm2 start src/server.js --name admin-service && pm2 save
+curl -s http://127.0.0.1:8040/api/v1/health
+```
+
+nginx, inside the `server { ... 443 ... }` block of `/etc/nginx/sites-available/admin`
+(the portal itself is the static `dist/` with an SPA fallback, as before):
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8040;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    client_max_body_size 4m;   # profile images travel as data URLs
+}
+```
+then `sudo nginx -t && sudo systemctl reload nginx`.
+
+Redeploy: `git pull && cd admin-service && npm ci --omit=dev && pm2 restart admin-service`.
+Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
+
 ## Step 1 — Pick a VPS plan
 
 | Resource | Minimum | Recommended |
