@@ -1,6 +1,6 @@
 import { db, nowIso, parseJson, transaction } from './database.js';
 import { settings } from '../config.js';
-import { DEFAULT_ROLES, DEFAULT_SETTINGS, DEFAULT_RECORDS } from './defaults.js';
+import { DEFAULT_ROLES, DEFAULT_SETTINGS, DEFAULT_RECORDS, RECOMMENDATION_RULES } from './defaults.js';
 import { countAdmins, insertAdmin } from '../models/adminModel.js';
 import { findRole, insertRole } from '../models/roleModel.js';
 import { insertRecord } from '../models/recordModel.js';
@@ -49,6 +49,18 @@ export function bootstrap() {
         }
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
             if (!settingExists(key)) setSetting(key, DEFAULT_SETTINGS[key]);
+        }
+        // Recommendation rules saved before they had a machine-checkable condition get one.
+        const rec = getSetting('recommendation');
+        if (rec.rules.some((r) => r.check === undefined && RECOMMENDATION_RULES.some((d) => d.id === r.id))) {
+            setSetting('recommendation', {
+                ...rec,
+                // Rules run top to bottom, so the fraud hold goes first.
+                rules: rec.rules.map((r) => {
+                    const d = RECOMMENDATION_RULES.find((x) => x.id === r.id);
+                    return r.check === undefined && d ? { ...r, check: d.check, ...(d.threshold ? { threshold: d.threshold } : {}), condition: d.condition } : r;
+                }).sort((a, b) => (b.check === 'critical-fraud') - (a.check === 'critical-fraud')),
+            });
         }
         for (const [collection, items] of Object.entries(DEFAULT_RECORDS)) {
             if (done.has(collection)) continue;

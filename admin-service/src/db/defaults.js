@@ -26,6 +26,13 @@ export const DEFAULT_ROLES = [
     { key: 'audit', name: 'Audit', short: 'AUD', level: 4, extra: null, permissions: matrix((_m, a) => a === 'view' || a === 'download') },
 ];
 
+export const RECOMMENDATION_RULES = [
+    { id: 'RR-4', rule: 'Critical fraud', condition: 'Critical trigger', check: 'critical-fraud', stage: 'Fraud trigger', result: 'Hold', status: 'Active' },
+    { id: 'RR-1', rule: 'Below authority limit', condition: 'Amount ≤ 50K', check: 'amount-at-most', threshold: 50000, stage: 'ILA', result: 'Auto recommended', status: 'Active' },
+    { id: 'RR-2', rule: 'Estimate', condition: 'Within approved limit (≤ 2L)', check: 'amount-at-most', threshold: 200000, stage: 'FLA', result: 'Auto recommended', status: 'Active' },
+    { id: 'RR-3', rule: 'High amount', condition: 'Above authority (> 2L)', check: 'amount-above', threshold: 200000, stage: 'Payment Recomendation', result: 'TCT review', status: 'Active' },
+];
+
 // ---------- settings documents ----------
 export const DEFAULT_SETTINGS = {
     config: {
@@ -68,12 +75,9 @@ export const DEFAULT_SETTINGS = {
         ],
     },
     recommendation: {
-        rules: [
-            { id: 'RR-1', rule: 'Below authority limit', condition: 'Amount 50K', stage: 'ILA', result: 'Auto recommended', status: 'Active' },
-            { id: 'RR-2', rule: 'Estimate', condition: 'Approved limit', stage: 'FLA', result: 'Auto recommended', status: 'Active' },
-            { id: 'RR-3', rule: 'High amount', condition: 'Above authority', stage: 'Payment Recomendation', result: 'TCT review', status: 'Active' },
-            { id: 'RR-4', rule: 'Critical fraud', condition: 'Critical trigger', stage: 'Fraud trigger', result: 'Hold', status: 'Active' },
-        ],
+        // Checked top to bottom on each claim waiting for a recommendation; the first match decides.
+        // check: 'critical-fraud' (open trigger in the Critical routing band) | 'amount-at-most' | 'amount-above' (amount vs threshold)
+        rules: RECOMMENDATION_RULES,
         payValidation: Object.fromEntries(PAYEE_TYPES.map((p) => [p, ['Bank Detail Validation', 'Duplicate Pay Check', 'Financer Interest Check', 'Partial Payment Allowed', 'PAN/KYC Validation']
             .map((label, ci) => ({ id: `${p}-${ci}`, label, on: true }))])),
     },
@@ -101,6 +105,10 @@ export const DEFAULT_SETTINGS = {
             },
         },
     },
+    // Allocation Load > Handler Allocation Rule. A handler is full at
+    // capacityLimit x thresholdPct% open claims; new claims for a full (or no)
+    // handler go to the least-loaded active handler (same branch first).
+    allocation: { autoAllocate: true, thresholdPct: 90, overflow: 'branch-first' },
     // Switches of System Settings > System Update (versions come from .env / deployments).
     systemUpdate: { maintenanceApproval: false, autoSecurityPatches: false, maintenanceMode: false },
     compliance: { auditLogin: true, retention: '7 Years', inputLogging: false, configApproval: false },

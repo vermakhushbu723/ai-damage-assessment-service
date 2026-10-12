@@ -84,6 +84,7 @@ Users, branches, changes, audit events and downloads are created from the portal
 | GET | `/claims`, `/claims/:id` | Claim / User Report, Allocation, Recommendation, Fraud |
 | POST | `/claims/ingest` (header `X-Service-Key`, or an admin token) | How claim systems push `{ claims, triggers, commLogs }` (create or update by id) |
 | POST | `/claims/reassign` `{ fromHandlerId, toHandlerId, count }` | Allocation Load: Reasigned |
+| POST | `/claims/rebalance` | Allocation Load: Rebalance Overloaded (moves claims off handlers above the threshold) |
 | GET / POST | `/changes` | Recent Configuration Changes (who / when / device stamped by the server) |
 | GET | `/audit-logs` | Audit Logs: sign-ins, failed sign-ins, resets, exports, downloads |
 | GET / POST | `/downloads` `{ format, types, from, to, region? }` | Data Download (CSV / Excel / JSON built on the server, kept 7 days) |
@@ -100,6 +101,19 @@ Errors are `{ "detail": "readable message" }` with a proper status (400 validati
 "triggers": [{ "id"?, "claim", "trigger", "score", "route", "reviewer", "status" }],
 "commLogs": [{ "id"?, "claim", "communication", "recipient", "to", "channel", "status", "message" }] }`.
 `handlerId` / `branchId` are the portal's own user / branch ids (USR-…, BR-…).
+`duplicateDocument` / `damageMismatch` (true/false) are the evidence flags the fraud rules read.
+
+What ingest does with each claim:
+- **Handler allocation rule** (`/settings/allocation`: `autoAllocate`, `thresholdPct`, `overflow`): a handler is
+  full at `capacityLimit x thresholdPct%` open claims. A *new* open claim whose handler is full, inactive
+  or missing goes to the least-loaded handler with room (same branch first for `branch-first`); the
+  decision is stored on the claim as `allocation` and returned in the response. Updates never re-allocate.
+- **Fraud trigger rules** (published + active) run on every pushed claim: `priorClaims` (same vehicle in
+  90 days), `amount`, `duplicate`, `mismatch`. Each hit is one trigger (`TRG-<claim>-<rule>`), routed by
+  the Fraud Routing matrix (score band -> action, recipient, hold). A hold puts the claim `onHold`.
+  Pushed triggers without a route get the matrix route too.
+- **Recommendation rules** carry a machine check (`amount-at-most` / `amount-above` + `threshold`,
+  or `critical-fraud`); the portal applies them top to bottom to claims in AI ILA / ILA / FLA.
 
 **Messages** ("Send Test", "Retry") go to the Communication Gateway integration
 (System Settings): `POST <endpoint> { channel, to, recipient, message, claim, reference }`

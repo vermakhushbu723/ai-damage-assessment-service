@@ -287,6 +287,57 @@ try {
     r = await post('/claims/reassign', { fromHandlerId: handler1.id, toHandlerId: handler2.id, count: 2 });
     check('reassign moves oldest open claims', r.data?.moved === 2 && r.data.from.handlerStats.inProgress === 2 && r.data.to.handlerStats.inProgress === 2, r.data);
 
+    // ---------- handler allocation rule ----------
+    const ingest = (body) => post('/claims/ingest', body, { token: null, headers: { 'X-Service-Key': INGEST_KEY } });
+    const newClaim = (id, o = {}) => ({ id, customer: 'Alloc', type: 'Motor Vehicle', amount: 20000, stage: 'Survey', region: 'North', intimatedAt: new Date().toISOString(), ...o });
+    r = await get('/settings/allocation');
+    check('allocation rule defaults', r.data?.autoAllocate === true && r.data.thresholdPct === 90 && r.data.overflow === 'branch-first', r.data);
+    check('threshold validated (10-100)', (await put('/settings/allocation', { autoAllocate: true, thresholdPct: 5, overflow: 'branch-first' })).status === 400);
+    check('overflow validated', (await put('/settings/allocation', { autoAllocate: true, thresholdPct: 50, overflow: 'random' })).status === 400);
+    // handler1: capacity 40 -> at 10% full at 4 open (has 2); handler2: capacity 100 -> 10 (has 2)
+    await put('/settings/allocation', { autoAllocate: true, thresholdPct: 10, overflow: 'branch-first' });
+    r = await ingest({ claims: [newClaim('AL-1', { handlerId: handler1.id }), newClaim('AL-2', { handlerId: handler1.id }), newClaim('AL-3', { handlerId: handler1.id })] });
+    check('claims stay with handler until the threshold', r.data?.allocation.reallocated.length === 1 && r.data.allocation.reallocated[0].claimId === 'AL-3', r.data?.allocation);
+    check('overflow goes to the handler with room', r.data?.allocation.reallocated[0].to === handler2.id && /maximum threshold/.test(r.data.allocation.reallocated[0].reason));
+    r = await get('/claims/AL-3');
+    check('allocation recorded on the claim', r.data.handlerId === handler2.id && r.data.allocation.mode === 'auto' && r.data.allocation.requestedHandlerId === handler1.id, r.data);
+    r = await ingest({ claims: [newClaim('AL-4')] });
+    check('claim without handler is allocated', (await get('/claims/AL-4')).data.handlerId === handler2.id, r.data);
+    r = await ingest({ claims: [newClaim('AL-1', { stage: 'ILA' })] });
+    check('updates never re-allocate', (await get('/claims/AL-1')).data.handlerId === handler1.id && r.data.allocation.reallocated.length === 0);
+    await patch(`/users/${handler1.id}`, { capacityLimit: 20 }); // limit 2, holds 4
+    r = await post('/claims/rebalance');
+    check('rebalance moves the excess', r.data?.moved === 2 && r.data.moves.every((m) => m.from === handler1.id && m.to === handler2.id), r.data);
+    check('handler back at its limit', (await get(`/users/${handler1.id}`)).data.handlerStats.inProgress === 2);
+    check('nothing left to rebalance', (await post('/claims/rebalance')).data?.moved === 0);
+    await put('/settings/allocation', { autoAllocate: false, thresholdPct: 10, overflow: 'branch-first' });
+    await ingest({ claims: [newClaim('AL-5', { handlerId: handler1.id })] });
+    check('auto-allocation off keeps the handler sent', (await get('/claims/AL-5')).data.handlerId === handler1.id);
+    await put('/settings/allocation', { autoAllocate: true, thresholdPct: 90, overflow: 'branch-first' });
+    await patch(`/users/${handler1.id}`, { capacityLimit: 40 });
+
+    // ---------- fraud rules on incoming claims ----------
+    r = await ingest({ claims: [newClaim('FR-C1', { amount: 90000 }), newClaim('FR-C2', { amount: 10000, duplicateDocument: true })] });
+    check('fraud rules create triggers', r.data?.triggers.auto === 2, r.data?.triggers);
+    r = await get('/triggers');
+    const highAmount = r.data.find((t) => t.claim === 'FR-C1');
+    const dup = r.data.find((t) => t.claim === 'FR-C2');
+    check('amount rule -> routed by score (Medium: Handler Review)', highAmount?.ruleId === 'FR-3' && highAmount.route === 'Handler Review' && highAmount.reviewer === 'Handler' && highAmount.status === 'Open', highAmount);
+    check('duplicate document -> Critical: hold', dup?.ruleId === 'FR-4' && dup.route === 'Hold Claim' && dup.hold === 'Yes', dup);
+    check('critical hold puts the claim on hold', (await get('/claims/FR-C2')).data.onHold === true);
+    check('re-push does not duplicate triggers', (await ingest({ claims: [newClaim('FR-C1', { amount: 95000 })] })).data?.triggers.auto === 0);
+    await patch('/fraud-rules/FR-3', { active: false });
+    check('inactive rule does not fire', (await ingest({ claims: [newClaim('FR-C3', { amount: 99000 })] })).data?.triggers.auto === 0);
+    await patch('/fraud-rules/FR-3', { active: true });
+    r = await ingest({ triggers: [{ id: 'TRG-EXT', claim: 'FR-C3', trigger: 'External check', score: 35 }] });
+    check('pushed trigger without route gets the matrix route', (await get('/triggers/TRG-EXT')).data?.route === 'Route Review');
+
+    // ---------- recommendation rules ----------
+    r = await get('/settings/recommendation');
+    check('recommendation rules carry checks (fraud first)', r.data.rules[0].check === 'critical-fraud' && r.data.rules.find((x) => x.id === 'RR-1').threshold === 50000, r.data.rules);
+    check('rule check validated', (await put('/settings/recommendation', { ...r.data, rules: [{ ...r.data.rules[1], check: 'magic' }] })).status === 400);
+    check('amount check needs an amount', (await put('/settings/recommendation', { ...r.data, rules: [{ ...r.data.rules[1], threshold: null }] })).status === 400);
+
     // ---------- triggers / comm logs ----------
     r = await patch('/triggers/TRG-1', { status: 'Under review' });
     check('trigger status change', r.data?.status === 'Under review');

@@ -8,6 +8,8 @@ import { listClaims, findClaim, upsertClaim, reassignClaims } from '../models/cl
 import { findUser } from '../models/userModel.js';
 import { findRecord, insertRecord, updateRecord } from '../models/recordModel.js';
 import { nextSequentialId } from '../utils/ids.js';
+import { handlerPool, allocate, evaluateFraud, routeTrigger, applyTriggerHold, rebalance } from '../services/claimPipeline.js';
+import { getSetting } from '../models/settingsModel.js';
 import { transaction } from '../db/database.js';
 
 const router = Router();
@@ -31,6 +33,9 @@ const CLAIM_SPEC = {
     region: { oneOf: REGIONS, label: 'Region' },
     intimatedAt: { label: 'Intimation date' },
     vehicleNo: { max: 30, label: 'Vehicle number' },
+    // Evidence flags the fraud trigger rules look at.
+    duplicateDocument: { type: 'boolean', label: 'Duplicate document' },
+    damageMismatch: { type: 'boolean', label: 'Damage mismatch' },
 };
 
 const TRIGGER_SPEC = {
@@ -125,13 +130,44 @@ router.post('/ingest', serviceKeyOrAdmin, asyncHandler(async (req, res) => {
 
     const result = transaction(() => {
         const count = (arr, fn) => arr.reduce((acc, item) => { acc[fn(item)]++; return acc; }, { created: 0, updated: 0 });
+        // New open claims go through the handler allocation rule.
+        const pool = handlerPool();
+        const rule = getSetting('allocation');
+        const allocation = { reallocated: [], unallocated: [] };
+        const claimsCount = count(cleanClaims, (c) => {
+            if (!findClaim(c.id)) {
+                const decided = allocate(c, pool, rule);
+                Object.assign(c, decided);
+                if (decided.allocation?.mode === 'auto') allocation.reallocated.push({ claimId: c.id, from: decided.allocation.requestedHandlerId, to: c.handlerId, reason: decided.allocation.reason });
+                if (decided.allocation?.mode === 'unallocated') allocation.unallocated.push(c.id);
+            }
+            return upsertClaim(c);
+        });
+        const triggersCount = count(cleanTriggers, (t) => {
+            const r = routeTrigger(t);
+            const outcome = upsertRecord('triggers', 'TRG', r);
+            applyTriggerHold(r);
+            return outcome;
+        });
+        // Fraud trigger rules on every pushed claim (one trigger per claim + rule).
+        const autoTriggers = cleanClaims.flatMap((c) => evaluateFraud(c.id));
         return {
-            claims: count(cleanClaims, upsertClaim),
-            triggers: count(cleanTriggers, (t) => upsertRecord('triggers', 'TRG', t)),
+            claims: claimsCount,
+            triggers: { ...triggersCount, auto: autoTriggers.length },
             commLogs: count(cleanLogs, (l) => upsertRecord('commLogs', 'LOG', l)),
+            allocation,
         };
     });
     res.json(result);
+}));
+
+/**
+ * POST /api/v1/claims/rebalance -- Allocation Load "Rebalance now": moves open
+ * claims off handlers above the maximum threshold to handlers with room.
+ */
+router.post('/rebalance', authenticate, asyncHandler(async (_req, res) => {
+    const moves = transaction(() => rebalance());
+    res.json({ moved: moves.length, moves });
 }));
 
 /**

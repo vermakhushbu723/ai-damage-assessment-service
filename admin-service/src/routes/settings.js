@@ -17,6 +17,7 @@ const router = Router();
 router.use(authenticate);
 
 const MAX_BYTES = 200 * 1024;
+const RECOMMENDATION_CHECKS = ['critical-fraud', 'amount-at-most', 'amount-above'];
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const need = (cond, msg) => { if (!cond) throw badRequest(msg); };
 const bool = (v, label) => need(typeof v === 'boolean', `${label} must be true or false.`);
@@ -86,6 +87,8 @@ const SHAPES = {
             text(r.stage, `${l} stage`, 60);
             text(r.result, `${l} result`, 60);
             need(['Active', 'Inactive'].includes(r.status), `${l} status must be Active or Inactive.`);
+            need(r.check == null || RECOMMENDATION_CHECKS.includes(r.check), `${l} check must be one of: ${RECOMMENDATION_CHECKS.join(', ')}.`);
+            if (r.check === 'amount-at-most' || r.check === 'amount-above') need(typeof r.threshold === 'number' && r.threshold >= 0, `${l} needs an amount.`);
         });
         need(isObj(v.payValidation), 'payValidation is required.');
         const payValidation = {};
@@ -107,6 +110,12 @@ const SHAPES = {
         need(new Set(names).size === names.length, 'Two stages have the same name.');
         need(isObj(v.operatingModel), 'operatingModel is required.');
         return { stages: v.stages, operatingModel: v.operatingModel };
+    },
+    allocation: (v) => {
+        bool(v.autoAllocate, 'autoAllocate');
+        need(Number.isInteger(v.thresholdPct) && v.thresholdPct >= 10 && v.thresholdPct <= 100, 'Maximum threshold must be 10-100%.');
+        need(['branch-first', 'least-loaded'].includes(v.overflow), 'overflow must be branch-first or least-loaded.');
+        return { autoAllocate: v.autoAllocate, thresholdPct: v.thresholdPct, overflow: v.overflow };
     },
     systemUpdate: (v) => switches(v, ['maintenanceApproval', 'autoSecurityPatches', 'maintenanceMode'], 'systemUpdate'),
     compliance: (v) => {
