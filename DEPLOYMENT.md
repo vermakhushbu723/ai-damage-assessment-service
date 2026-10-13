@@ -112,13 +112,16 @@ location /api/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    client_max_body_size 4m;   # profile images travel as data URLs
+    client_max_body_size 160m; # profile images (data URLs) + Pre-Inspection app photos / walk-around videos
+    proxy_request_buffering off;
+    proxy_read_timeout 300s;
 }
 ```
 then `sudo nginx -t && sudo systemctl reload nginx`.
 
 Redeploy: `git pull && cd admin-service && npm ci --omit=dev && pm2 restart admin-service`.
-Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
+Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode)
+**and** the `uploads/` folder (Pre-Inspection app photos, videos, documents, signatures).
 
 ## Step 1 — Pick a VPS plan
 

@@ -1,6 +1,6 @@
 import { db, nowIso, parseJson, transaction } from './database.js';
 import { settings } from '../config.js';
-import { DEFAULT_ROLES, DEFAULT_SETTINGS, DEFAULT_RECORDS, RECOMMENDATION_RULES } from './defaults.js';
+import { DEFAULT_ROLES, DEFAULT_SETTINGS, DEFAULT_RECORDS, RECOMMENDATION_RULES, PREINSPECTION_ROLES } from './defaults.js';
 import { countAdmins, insertAdmin } from '../models/adminModel.js';
 import { findRole, insertRole } from '../models/roleModel.js';
 import { insertRecord } from '../models/recordModel.js';
@@ -46,6 +46,12 @@ export function bootstrap() {
         if (!done.has('roles')) {
             for (const role of DEFAULT_ROLES) if (!findRole(role.key)) insertRole({ ...role, isSystem: true });
             done.add('roles');
+            done.add('roles-preinspection');
+        }
+        // Databases created before the Pre-Inspection Agent app get its two roles once.
+        if (!done.has('roles-preinspection')) {
+            for (const role of PREINSPECTION_ROLES) if (!findRole(role.key)) insertRole({ ...role, isSystem: true });
+            done.add('roles-preinspection');
         }
         for (const key of Object.keys(DEFAULT_SETTINGS)) {
             if (!settingExists(key)) setSetting(key, DEFAULT_SETTINGS[key]);

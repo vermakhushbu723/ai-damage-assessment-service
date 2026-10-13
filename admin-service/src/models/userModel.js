@@ -125,3 +125,22 @@ export function insertResetToken({ tokenHash, userId, expiresAt, createdBy }) {
 
 export const findResetToken = (tokenHash) => db.prepare('SELECT * FROM reset_tokens WHERE token_hash = ?').get(tokenHash);
 export const markResetTokenUsed = (tokenHash) => db.prepare('UPDATE reset_tokens SET used_at = ? WHERE token_hash = ?').run(nowIso(), tokenHash);
+
+// ---- field app sign-in (Pre-Inspection Agent app) ----
+/** Raw row by login name or email (any case) -- includes password_hash. */
+export function findUserRowByLogin(identifier) {
+    const id = String(identifier ?? '').trim();
+    return db.prepare('SELECT * FROM users WHERE lower(user_id) = lower(?) OR lower(email) = lower(?)').get(id, id);
+}
+
+export function recordUserLoginSuccess(id) {
+    db.prepare('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?').run(nowIso(), id);
+}
+
+/** Counts a wrong password; locks the account after `max` in a row. */
+export function recordUserLoginFailure(id, max, lockMinutes) {
+    const failed = (db.prepare('SELECT failed_logins FROM users WHERE id = ?').get(id).failed_logins ?? 0) + 1;
+    const lockedUntil = failed >= max ? new Date(Date.now() + lockMinutes * 60_000).toISOString() : null;
+    db.prepare('UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?').run(lockedUntil ? 0 : failed, lockedUntil, id);
+    return { failed, lockedUntil };
+}

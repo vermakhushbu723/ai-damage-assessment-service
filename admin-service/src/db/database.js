@@ -164,6 +164,46 @@ db.exec(`
         expires_at TEXT NOT NULL
     );
 
+    -- Pre-inspections submitted from the Pre-Inspection Agent app (preinspection_agent_app).
+    -- Columns hold what is listed / filtered; the rest of the app's form is in data (JSON).
+    CREATE TABLE IF NOT EXISTS inspections (
+        id TEXT PRIMARY KEY,                      -- PI-100001, ... (the app's "PI Ref. Number")
+        agent_id TEXT NOT NULL REFERENCES users(id),
+        agent_role TEXT NOT NULL,                 -- agent | surveyor (login tab)
+        status TEXT NOT NULL DEFAULT 'Draft',     -- Assigned (by admin, not started) | Draft (agent working) | Submitted | Approved | Rejected
+        registration_number TEXT NOT NULL,
+        owner_name TEXT NOT NULL,
+        workflow TEXT,                            -- damage | others (photo-capture branch)
+        data TEXT NOT NULL,                       -- JSON: owner & vehicle form, recommendation, declarations, location
+        submitted_at TEXT,
+        repair_submitted_at TEXT,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        review_remarks TEXT,
+        assigned_by TEXT,                         -- admin name when assigned from the panel
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_inspections_agent ON inspections(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_inspections_status ON inspections(status);
+
+    -- Files of an inspection, stored on disk under UPLOADS_DIR/<inspection id>/.
+    -- (inspection, kind, slot) is unique: re-capturing a slot replaces the file.
+    CREATE TABLE IF NOT EXISTS inspection_media (
+        id TEXT PRIMARY KEY,                      -- random
+        inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,                       -- document | photo | video | signature | reinspection | repair
+        slot TEXT NOT NULL,                       -- e.g. rc_front, front-side, walkaround, customer, bill
+        mime TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        file_name TEXT NOT NULL,                  -- relative to UPLOADS_DIR
+        latitude REAL,
+        longitude REAL,
+        captured_at TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (inspection_id, kind, slot)
+    );
+
     -- Requests per day and module ("API Usage" / module usage on SaaS Usage).
     CREATE TABLE IF NOT EXISTS api_usage (
         day TEXT NOT NULL,
@@ -173,6 +213,13 @@ db.exec(`
         PRIMARY KEY (day, module, admin_id)
     );
 `);
+
+// Columns added after the first deploy (node:sqlite has no migrations):
+// sign-in tracking for users who log in to the field app.
+const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
+for (const [col, type] of [['failed_logins', 'INTEGER NOT NULL DEFAULT 0'], ['locked_until', 'TEXT'], ['last_login_at', 'TEXT']]) {
+    if (!userColumns.has(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
+}
 
 export const nowIso = () => new Date().toISOString();
 

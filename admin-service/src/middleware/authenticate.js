@@ -19,6 +19,8 @@ export function authenticate(req, res, next) {
     } catch (err) {
         return res.status(401).json({ detail: err.message === 'Token expired' ? 'Session expired, please sign in again.' : 'Invalid session, please sign in again.' });
     }
+    // Field app tokens (kind: 'field') never open the admin console.
+    if (claims.kind) return res.status(401).json({ detail: 'Invalid session, please sign in again.' });
     const admin = findAdminById(claims.sub);
     if (!admin || admin.status !== 'Active') {
         return res.status(401).json({ detail: 'This account is no longer active.' });

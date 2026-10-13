@@ -23,6 +23,7 @@ const server = spawn(process.execPath, ['src/server.js'], {
         ...process.env,
         PORT: String(PORT),
         DATABASE_FILE: join(dir, 'test.db'),
+        UPLOADS_DIR: join(dir, 'uploads'),
         JWT_SECRET: 'test-secret',
         BOOTSTRAP_ADMIN_EMAIL: 'admin@test.in',
         BOOTSTRAP_ADMIN_MOBILE: '9876543210',
@@ -125,7 +126,7 @@ try {
 
     // ---------- defaults ----------
     r = await get('/roles');
-    check('11 default roles with permission matrix', r.data.length === 11 && r.data[0].permissions.Dashboard.view === true, r.data.length);
+    check('13 default roles with permission matrix (incl. pre-inspection)', r.data.length === 13 && r.data[0].permissions.Dashboard.view === true && r.data.some((x) => x.key === 'preinspection-agent'), r.data.length);
     r = await get('/settings');
     check('settings documents', ['config', 'routing', 'recommendation', 'stageConfig', 'systemUpdate', 'compliance'].every((k) => r.data[k]));
     check('system update versions from env', r.data.systemUpdate.current === '2.4.1' && r.data.systemUpdate.latest === '2.4.2');
@@ -442,6 +443,150 @@ try {
     check('heat map 6 x 12', r.data.heatmap.length === 6 && r.data.heatmap.every((d) => d.slots.length === 12));
     check('dau/mau 9 days', r.data.dauMau.length === 9 && r.data.dauMau.at(-1).dau === 1);
     check('organizations counted', r.data.cards.orgs.value === 2, r.data.cards.orgs);
+
+    // ---------- Pre-Inspection Agent app ----------
+    const PNG = Buffer.from(IMG.split(',')[1], 'base64');
+    const raw = async (path, bytes, type, token) => {
+        const res = await fetch(`${BASE}${path}`, { method: 'PUT', headers: { 'Content-Type': type, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: bytes });
+        let data = null;
+        try { data = await res.json(); } catch { /* empty */ }
+        return { status: res.status, data };
+    };
+    const fieldUser = (o) => userBody({ roleKey: 'preinspection-agent', reportingManagerId: 'ADMIN', platform: 'mobile', tempPassword: 'Agent@1234', extra: {}, ...o });
+    r = await post('/users', fieldUser({ name: 'Pia Agent', userId: 'pia.agent', email: 'pia@test.in', employeeId: 'EMP-PIA', contact: '9700000001', altContact: '9700000002' }));
+    check('create a pre-inspection agent in Create Users', r.status === 201, r.data);
+    const agentA = r.data;
+    await post('/users', fieldUser({ name: 'Second Agent', userId: 'pia.two', email: 'pia2@test.in', employeeId: 'EMP-PIA2', contact: '9700000003', altContact: '9700000004' }));
+    await post('/users', fieldUser({ name: 'Web Only', userId: 'pia.web', email: 'piaweb@test.in', employeeId: 'EMP-PIAW', contact: '9700000005', altContact: '9700000006', platform: 'web' }));
+    const flogin = (userId, password, role) => post('/field/auth/login', { userId, password, role }, { token: null });
+    check('app login: wrong password', (await flogin('pia.agent', 'nope', 'agent')).status === 401);
+    check('app login: wrong tab -> 403', (await flogin('pia.agent', 'Agent@1234', 'surveyor')).status === 403);
+    check('app login: web-only account -> 403', (await flogin('pia.web', 'Agent@1234', 'agent')).status === 403);
+    check('app login: other roles (call center) cannot use the app', (await flogin('karan.m', 'Temp@1234', 'agent')).status === 403);
+    check('app login: role must be agent/surveyor', (await flogin('pia.agent', 'Agent@1234', 'boss')).status === 400);
+    r = await flogin('PIA.AGENT', 'Agent@1234', 'agent');
+    check('app login ok (user ID any case)', r.status === 200 && r.data.token && r.data.user.role === 'agent' && r.data.user.roleName === 'Pre-Inspection Agent', r.data);
+    const FT = r.data.token;
+    const FT2 = (await flogin('pia2@test.in', 'Agent@1234', 'agent')).data?.token;
+    check('app login by email', !!FT2);
+    check('field token does not open the admin console', (await get('/users', { token: FT })).status === 401);
+    check('admin token does not open the field API', (await get('/field/inspections')).status === 401);
+    check('field /auth/me', (await get('/field/auth/me', { token: FT })).data?.user?.userId === 'pia.agent');
+
+    const owner = {
+        surveyType: 'pre inspection', ownerName: 'Ravi Kumar', mobile: '9876500000', email: 'ravi@test.in', odometer: '45200', registrationNumber: 'mh12ab1234',
+        state: 'Maharashtra', registrationDate: '15-03-2019', product: 'Private Car', make: 'Maruti Suzuki', model: 'Swift', variant: 'VXI', manufacturingYear: '02-2019', ownerSerialNumber: '1', idv: '',
+    };
+    check('inspection validation (mobile)', (await post('/field/inspections', { ...owner, mobile: '123' }, { token: FT })).status === 400);
+    check('valuation needs a market value', (await post('/field/inspections', { ...owner, surveyType: 'Valuation' }, { token: FT })).status === 400);
+    r = await post('/field/inspections', owner, { token: FT });
+    check('start pre-inspection -> PI ref', r.status === 201 && r.data.piRef === 'PI-100001' && r.data.registrationNumber === 'MH12AB1234' && r.data.status === 'Pending', r.data);
+    const PI = r.data.id;
+    check('dashboard lists own inspections', (await get('/field/inspections', { token: FT })).data.length === 1);
+    check('another agent cannot see it', (await get('/field/inspections', { token: FT2 })).data.length === 0 && (await get(`/field/inspections/${PI}`, { token: FT2 })).status === 404);
+
+    r = await raw(`/field/inspections/${PI}/media/photo/front-side?lat=19.07&lng=72.87&capturedAt=2026-10-13T10:00:00Z`, PNG, 'image/png', FT);
+    check('upload a vehicle photo with GPS', r.status === 201 && r.data.latitude === 19.07 && r.data.url.includes('sig='), r.data);
+    const photoUrl = r.data.url;
+    r = await raw(`/field/inspections/${PI}/media/photo/front-side`, PNG, 'image/png', FT);
+    check('re-capturing a slot replaces it', r.status === 201 && (await get(`/field/inspections/${PI}`, { token: FT })).data.media.filter((m) => m.slot === 'front-side').length === 1);
+    check('wrong file type rejected', (await raw(`/field/inspections/${PI}/media/photo/rear-side`, Buffer.from('hello'), 'text/plain', FT)).status === 400);
+    check('video slot needs a video', (await raw(`/field/inspections/${PI}/media/video/walkaround`, PNG, 'image/png', FT)).status === 400);
+    check('empty file rejected', (await raw(`/field/inspections/${PI}/media/photo/rear-side`, Buffer.alloc(0), 'image/png', FT)).status === 400);
+    check('bad slot rejected', (await raw(`/field/inspections/${PI}/media/photo/a%20b`, PNG, 'image/png', FT)).status === 400);
+    check('walk-around video upload', (await raw(`/field/inspections/${PI}/media/video/walkaround`, Buffer.from('0000ftypmp42'), 'video/mp4', FT)).status === 201);
+    check('document upload (RC front)', (await raw(`/field/inspections/${PI}/media/document/rc_front`, PNG, 'image/jpeg', FT)).status === 201);
+    check('other agent cannot upload', (await raw(`/field/inspections/${PI}/media/photo/x`, PNG, 'image/png', FT2)).status === 404);
+    f = await fetch(`http://127.0.0.1:${PORT}${photoUrl.replace(/^.*?(\/api)/, '$1')}`);
+    check('signed link serves the file', f.status === 200 && f.headers.get('content-type').startsWith('image/png'));
+    f = await fetch(`http://127.0.0.1:${PORT}${photoUrl.replace(/sig=[^&]+/, 'sig=forged')}`);
+    check('forged link -> 403', f.status === 403);
+
+    check('submit needs the workflow choice', (await post(`/field/inspections/${PI}/submit`, {}, { token: FT })).status === 400);
+    check('workflow validated', (await patch(`/field/inspections/${PI}`, { workflow: 'magic' }, { token: FT })).status === 400);
+    await patch(`/field/inspections/${PI}`, { workflow: 'others' }, { token: FT });
+    r = await post(`/field/inspections/${PI}/submit`, {}, { token: FT });
+    check('others workflow needs both signatures', r.status === 400 && /signatures/.test(r.data.detail), r.data);
+    await raw(`/field/inspections/${PI}/media/signature/customer`, PNG, 'image/png', FT);
+    await raw(`/field/inspections/${PI}/media/signature/inspector`, PNG, 'image/png', FT);
+    check('...and both declarations', (await post(`/field/inspections/${PI}/submit`, {}, { token: FT })).status === 400);
+    await patch(`/field/inspections/${PI}`, { customerDeclaration: true, inspectorDeclaration: true, latitude: 19.07, longitude: 72.87 }, { token: FT });
+    check('...and the recommendation', (await post(`/field/inspections/${PI}/submit`, {}, { token: FT })).status === 400);
+    await patch(`/field/inspections/${PI}`, { agentRecommendation: 'Approved' }, { token: FT });
+    r = await post(`/field/inspections/${PI}/submit`, {}, { token: FT });
+    check('submit pre-inspection', r.status === 200 && r.data.status === 'Completed' && r.data.inspectionStatus === 'Submitted', r.data);
+    check('no edits after submit', (await patch(`/field/inspections/${PI}`, { odometer: '1' }, { token: FT })).status === 409);
+    check('no uploads after submit', (await raw(`/field/inspections/${PI}/media/photo/rear-side`, PNG, 'image/png', FT)).status === 409);
+    check('submit only once', (await post(`/field/inspections/${PI}/submit`, {}, { token: FT })).status === 409);
+    check('others workflow has no repair step', (await raw(`/field/inspections/${PI}/media/reinspection/main`, PNG, 'image/png', FT)).status === 409);
+
+    // admin panel side
+    r = await get('/preinspections');
+    const listed = r.data.find((x) => x.id === PI);
+    check('admin sees the submitted pre-inspection', listed && listed.agentName === 'Pia Agent' && listed.agentUserId === 'pia.agent' && listed.mediaCounts.photo === 1 && listed.mediaCounts.signature === 2, listed);
+    r = await get(`/preinspections/${PI}`);
+    check('admin detail with every file', r.data.media.length === 5 && r.data.make === 'Maruti Suzuki' && r.data.agentRecommendation === 'Approved' && r.data.latitude === 19.07, r.data.media);
+    f = await fetch(`http://127.0.0.1:${PORT}${r.data.media.find((m) => m.kind === 'video').url}`, { headers: { Range: 'bytes=0-3' } });
+    check('video served with range requests', f.status === 206);
+    check('reject needs a reason', (await patch(`/preinspections/${PI}/review`, { decision: 'Rejected' })).status === 400);
+    check('review decision validated', (await patch(`/preinspections/${PI}/review`, { decision: 'Maybe' })).status === 400);
+    r = await patch(`/preinspections/${PI}/review`, { decision: 'Approved', remarks: 'All clear' });
+    check('admin approves', r.data?.status === 'Approved' && r.data.reviewedBy === 'Admin', r.data);
+    check('agent sees the review', (await get('/field/inspections', { token: FT })).data[0].inspectionStatus === 'Approved');
+    check('field token cannot review', (await patch(`/preinspections/${PI}/review`, { decision: 'Rejected', remarks: 'x' }, { token: FT })).status === 401);
+    check('approved + recommended: no repair step', (await raw(`/field/inspections/${PI}/media/reinspection/main`, PNG, 'image/png', FT)).status === 409);
+    r = await patch(`/preinspections/${PI}/review`, { decision: 'Rejected', remarks: 'Front bumper damaged - repair and re-inspect' });
+    check('admin rejects -> agent can send repair photos', r.data?.status === 'Rejected' && (await get('/field/inspections', { token: FT })).data.find((x) => x.id === PI).canSubmitRepair === true);
+    check('rejected case: reinspection photo', (await raw(`/field/inspections/${PI}/media/reinspection/main`, PNG, 'image/png', FT)).status === 201);
+    r = await post(`/field/inspections/${PI}/repair-submit`, {}, { token: FT });
+    check('repair submitted -> back to Pending Review', r.data?.inspectionStatus === 'Submitted' && r.data.repairSubmittedAt, r.data);
+
+    // damage workflow: submit -> repair & reinspection photos
+    r = await post('/field/inspections', { ...owner, registrationNumber: 'KA01CD5678' }, { token: FT });
+    const PI2 = r.data.id;
+    await raw(`/field/inspections/${PI2}/media/photo/front-side`, PNG, 'image/png', FT);
+    r = await raw(`/field/inspections/${PI2}/media/photo/additional-damage-1`, PNG, 'image/png', FT);
+    check('delete a draft photo', (await del(`/field/inspections/${PI2}/media/${r.data.id}`, { token: FT })).status === 200);
+    await patch(`/field/inspections/${PI2}`, { workflow: 'damage' }, { token: FT });
+    check('reinspection photos only after submit', (await raw(`/field/inspections/${PI2}/media/reinspection/main`, PNG, 'image/png', FT)).status === 409);
+    r = await post(`/field/inspections/${PI2}/submit`, {}, { token: FT });
+    check('damage survey submits without signatures', r.status === 200 && r.data.canSubmitRepair === true, r.data);
+    check('repair submit needs photos', (await post(`/field/inspections/${PI2}/repair-submit`, {}, { token: FT })).status === 400);
+    check('reinspection photo', (await raw(`/field/inspections/${PI2}/media/reinspection/main`, PNG, 'image/png', FT)).status === 201);
+    check('repair bill', (await raw(`/field/inspections/${PI2}/media/repair/bill`, PNG, 'image/png', FT)).status === 201);
+    r = await post(`/field/inspections/${PI2}/repair-submit`, {}, { token: FT });
+    check('repair & reinspection submitted', r.status === 200 && r.data.repairSubmittedAt && r.data.canSubmitRepair === false, r.data);
+    check('repair submit only once', (await post(`/field/inspections/${PI2}/repair-submit`, {}, { token: FT })).status === 409);
+    check('admin sees repair files', (await get(`/preinspections/${PI2}`)).data.media.filter((m) => ['reinspection', 'repair'].includes(m.kind)).length === 2);
+    check('draft cannot be reviewed', (await post('/field/inspections', { ...owner, registrationNumber: 'DL01EF0001' }, { token: FT })).status === 201
+        && (await patch('/preinspections/PI-100003/review', { decision: 'Approved' })).status === 409);
+
+    // admin assigns cases -> they show up on the agent's dashboard
+    check('assign validates the agent', (await post('/preinspections', { agentId: handler1.id, ownerName: 'Asha', mobile: '9811100000', registrationNumber: 'GJ01AA1111' })).status === 400);
+    check('assign validates web-only agents', (await post('/preinspections', { agentId: (await get('/users')).data.find((u) => u.userId === 'pia.web').id, ownerName: 'Asha', mobile: '9811100000', registrationNumber: 'GJ01AA1111' })).status === 400);
+    r = await post('/preinspections', { agentId: agentA.id, ownerName: 'Asha Mehta', mobile: '+91 98111 00000', registrationNumber: 'gj 01 aa 1111' });
+    check('admin assigns a pre-inspection', r.status === 201 && r.data.status === 'Assigned' && r.data.registrationNumber === 'GJ01AA1111' && r.data.assignedBy === 'Admin', r.data);
+    const PIA = r.data.id;
+    r = (await get('/field/inspections', { token: FT })).data.find((x) => x.id === PIA);
+    check('assigned case is Pending on the app', r?.status === 'Pending' && r.inspectionStatus === 'Assigned' && r.insuredName === 'Asha Mehta', r);
+    check('no uploads before the owner form', (await raw(`/field/inspections/${PIA}/media/photo/front-side`, PNG, 'image/png', FT)).status === 409);
+    check('no submit before the owner form', (await post(`/field/inspections/${PIA}/submit`, {}, { token: FT })).status === 400);
+    const agentB = (await get('/users')).data.find((u) => u.userId === 'pia.two');
+    r = await patch(`/preinspections/${PIA}/assign`, { agentId: agentB.id });
+    check('admin reassigns', r.data?.agentId === agentB.id);
+    check('previous agent loses it', (await get(`/field/inspections/${PIA}`, { token: FT })).status === 404 && (await get(`/field/inspections/${PIA}`, { token: FT2 })).status === 200);
+    r = await patch(`/field/inspections/${PIA}`, { ...owner, ownerName: 'Asha Mehta', registrationNumber: 'GJ01AA1111' }, { token: FT2 });
+    check('agent starts the case (Assigned -> Draft)', r.data?.inspectionStatus === 'Draft', r.data);
+    check('started case cannot be cancelled', (await del(`/preinspections/${PIA}`)).status === 409);
+    r = await post('/preinspections', { agentId: agentA.id, ownerName: 'Cancel Me', mobile: '9811100001', registrationNumber: 'GJ01BB2222' });
+    check('cancel an unstarted case', (await del(`/preinspections/${r.data.id}`)).status === 200 && (await get(`/preinspections/${r.data.id}`)).status === 404);
+
+    // admin controls who can use the app
+    await post('/users/bulk-status', { ids: [agentA.id], status: 'Suspended' });
+    check('suspended agent is signed out', (await get('/field/inspections', { token: FT })).status === 401);
+    check('suspended agent cannot sign in', (await flogin('pia.agent', 'Agent@1234', 'agent')).status === 403);
+    await post('/users/bulk-status', { ids: [agentA.id], status: 'Active' });
+    check('app sign-ins in Audit Logs', (await get('/audit-logs')).data.some((e) => e.module === 'Field App' && e.reference === 'Login'));
 
     // ---------- misc ----------
     check('unknown route -> 404', (await get('/nope')).status === 404);

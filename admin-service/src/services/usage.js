@@ -10,6 +10,7 @@ const MODULE_OF = {
     'fraud-rules': 'Fraud & Controls', triggers: 'Fraud & Controls', claims: 'Claims Management', reports: 'Reports',
     downloads: 'Data Download', changes: 'Audit Logs', 'audit-logs': 'Audit Logs', integrations: 'System Settings',
     'compliance-log': 'System Settings', system: 'System Settings',
+    field: 'Pre-Inspection App', preinspections: 'Pre-Inspection', media: 'Pre-Inspection',
 };
 export const USAGE_MODULES = [...new Set(Object.values(MODULE_OF))];
 

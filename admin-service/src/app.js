@@ -14,6 +14,8 @@ import integrationsRouter from './routes/integrations.js';
 import communicationRouter from './routes/communication.js';
 import systemRouter from './routes/system.js';
 import { mountResources } from './routes/resources.js';
+import fieldRouter from './routes/field.js';
+import preinspectionsRouter from './routes/preinspections.js';
 import { countUsage } from './services/usage.js';
 
 export const app = express();
@@ -31,6 +33,8 @@ api.get('/health', (_req, res) => res.json({ status: 'ok', service: 'admin-servi
 
 // Public
 api.use('/auth', authRouter);
+// Pre-Inspection Agent app (own field-user tokens) + its files (signed links)
+api.use('/field', fieldRouter);
 api.use('/password-reset', passwordResetRouter);
 
 // Signed in (each router checks the token itself; claims/ingest also takes X-Service-Key)
@@ -43,6 +47,7 @@ api.use('/reports', reportsRouter);
 api.use('/integrations', integrationsRouter);
 api.use('/system', systemRouter);
 api.use(changesRouter); // /changes, /audit-logs
+api.use(preinspectionsRouter); // /preinspections (admin), /media/:inspectionId/:mediaId (signed, public)
 api.use(communicationRouter); // GET /channels (+ sentToday), /comm-logs, send test, retry -- before the generic /channels resource
 mountResources(api); // branches, document-templates, comm-rules, comm-templates, channels, fraud-rules, authority-matrix, approval-history, compliance-log, triggers
 

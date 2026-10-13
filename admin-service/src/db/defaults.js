@@ -12,6 +12,12 @@ const matrix = (fn) => Object.fromEntries(PERMISSION_MODULES.map((m) => [
 const ADMIN_ONLY = ['Users & Roles', 'System Configuration', 'Audit Logs'];
 export const viewOnlyPermissions = () => matrix((_m, a) => a === 'view');
 
+// Users of the Pre-Inspection Agent app (login tabs Agent / Surveyor).
+export const PREINSPECTION_ROLES = [
+    { key: 'preinspection-agent', name: 'Pre-Inspection Agent', short: 'PIA', level: 5, extra: null, permissions: matrix((m, a) => ['Dashboard', 'Claim Details', 'Document/DMS'].includes(m) && a !== 'approve') },
+    { key: 'preinspection-surveyor', name: 'Pre-Inspection Surveyor', short: 'PIS', level: 5, extra: null, permissions: matrix((m, a) => ['Dashboard', 'Claim Details', 'Document/DMS', 'Surveyor Assignment'].includes(m) && a !== 'approve') },
+];
+
 export const DEFAULT_ROLES = [
     { key: 'national-manager', name: 'National Manager', short: 'NM', chartLabel: 'National Manager (NM)', level: 1, extra: 'national-manager', permissions: matrix(() => true) },
     { key: 'regional-manager', name: 'Regional Manager', short: 'RCM', chartLabel: 'Regional Claim Manager (RCM)', level: 2, extra: 'regional-manager', permissions: matrix((m) => !ADMIN_ONLY.includes(m)) },
@@ -24,6 +30,7 @@ export const DEFAULT_ROLES = [
     { key: 'tct', name: 'TCT', short: 'TCT', level: 5, extra: null, permissions: viewOnlyPermissions() },
     { key: 'sr-tct', name: 'Sr. TCT', short: 'STCT', level: 4, extra: null, permissions: matrix((_m, a) => a === 'view' || a === 'approve') },
     { key: 'audit', name: 'Audit', short: 'AUD', level: 4, extra: null, permissions: matrix((_m, a) => a === 'view' || a === 'download') },
+    ...PREINSPECTION_ROLES,
 ];
 
 export const RECOMMENDATION_RULES = [

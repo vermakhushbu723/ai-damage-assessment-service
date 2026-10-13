@@ -28,6 +28,14 @@ export const settings = {
     appVersion: process.env.APP_VERSION || '2.4.1',
     latestVersion: process.env.LATEST_VERSION || process.env.APP_VERSION || '2.4.1',
     latestReleaseDate: process.env.LATEST_RELEASE_DATE || null,
+    // Pre-inspection app uploads (photos, walk-around video, documents, signatures).
+    uploadsDir: process.env.UPLOADS_DIR || './uploads',
+    maxPhotoMb: Number(process.env.MAX_PHOTO_MB || 15),
+    maxVideoMb: Number(process.env.MAX_VIDEO_MB || 150),
+    // How long a signed media link (admin <img>/<video>, app thumbnails) stays valid.
+    mediaLinkTtlSeconds: Number(process.env.MEDIA_LINK_TTL_SECONDS || 3600),
+    // Field app (pre-inspection) sign-ins stay valid longer than the admin console.
+    fieldJwtExpiresInSeconds: Number(process.env.FIELD_JWT_EXPIRES_IN_SECONDS || 7 * 86400),
     maxFailedLogins: 5,
     lockMinutes: 15,
     bootstrapAdmin: {

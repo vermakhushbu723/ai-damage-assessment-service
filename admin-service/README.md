@@ -92,6 +92,10 @@ Users, branches, changes, audit events and downloads are created from the portal
 | GET | `/reports/usage` | SaaS Usage (cards, DAU/MAU, module usage) + User Report heat map |
 | GET / PATCH · POST | `/integrations` · `/integrations/:id/test` | System Settings > API Integration (real HTTP test; API key never returned) |
 | GET · POST | `/system` · `/system/update` | System Update (versions from `.env`, deployment history) |
+| GET / POST | `/preinspections` | Pre-Inspections list / "+ Assign Pre-Inspection" `{ agentId, ownerName, mobile, registrationNumber, email?, surveyType? }` |
+| GET · DELETE | `/preinspections/:id` | Detail with signed file links · cancel an unstarted (Assigned) case |
+| PATCH | `/preinspections/:id/assign` `{ agentId }` · `/preinspections/:id/review` `{ decision: Approved\|Rejected, remarks }` | Reassign · Approve / Reject (reason required to reject) |
+| GET | `/media/:inspectionId/:mediaId?exp=&sig=` (public, signed, expiring) | Serves a photo / video / document (range requests for video) |
 
 Errors are `{ "detail": "readable message" }` with a proper status (400 validation,
 401 not signed in, 404, 409 duplicate, 410 expired file, 423 locked, 502 gateway error).
@@ -118,6 +122,28 @@ What ingest does with each claim:
 **Messages** ("Send Test", "Retry") go to the Communication Gateway integration
 (System Settings): `POST <endpoint> { channel, to, recipient, message, claim, reference }`
 with the API key as Bearer / X-API-Key. Nothing is marked delivered unless it answers 2xx.
+
+## Pre-Inspection Agent app (`/api/v1/field`)
+
+The Flutter app `preinspection_agent_app` signs in here with users created in
+**Create Users** -- role *Pre-Inspection Agent* (login tab Agent) or *Pre-Inspection
+Surveyor* / *Internal* / *External Surveyor* (tab Surveyor), platform *Mobile* or *Both*,
+status *Active*. Field tokens (`kind: 'field'`) never open the admin routes and admin
+tokens never open these. 5 wrong passwords lock the account for 15 minutes.
+
+| Method | Path | App screen |
+|---|---|---|
+| POST | `/field/auth/login` `{ userId (or email), password, role: agent\|surveyor }` | Login |
+| GET · POST | `/field/auth/me` · `/field/auth/logout`, `/field/auth/change-password` | Session |
+| GET | `/field/inspections` | Dashboard (own cases: Pending = Assigned/Draft, Completed = submitted) |
+| POST | `/field/inspections` | Start a case without an assignment (owner & vehicle form) |
+| GET / PATCH | `/field/inspections/:id` | Open a case / Owner & Vehicle Details "Next", workflow, declarations, recommendation |
+| PUT | `/field/inspections/:id/media/:kind/:slot` (raw body, `Content-Type` = file type; `?lat=&lng=&capturedAt=`) | Every photo, document, video, signature as it is captured. Kinds: `photo`, `document`, `video`, `signature` (open case) and `reinspection`, `repair` (after submit). Same slot = replace |
+| DELETE | `/field/inspections/:id/media/:mediaId` | Remove a photo |
+| POST | `/field/inspections/:id/submit` | Vehicle Information / Damage Review "Submit Survey" (checks owner details, photos, both signatures + declarations + recommendation) |
+| POST | `/field/inspections/:id/repair-submit` | Repair Submission "Submit" -- for a case that needs repair (not recommended, rejected, or damage survey); a rejected case goes back to Pending Review |
+
+Files are stored under `UPLOADS_DIR/<PI ref>/` (back them up with `admin.db`).
 
 **Email:** no mail server is configured, so "Send Link" returns the link for the admin
 to share (`emailSent: false`).
