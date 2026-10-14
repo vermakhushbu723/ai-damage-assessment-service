@@ -204,6 +204,29 @@ db.exec(`
         UNIQUE (inspection_id, kind, slot)
     );
 
+    -- Contact enquiries from the IBima Assist app (ibima-assist-app, the website's
+    -- Android build) -- same fields as the website's Contact form.
+    CREATE TABLE IF NOT EXISTS enquiries (
+        id TEXT PRIMARY KEY,                      -- ENQ-1001, ...
+        name TEXT NOT NULL,
+        organisation TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        org_type TEXT,
+        interest TEXT,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'new',       -- new | contacted | qualified | closed | spam
+        notes TEXT,
+        source TEXT NOT NULL DEFAULT 'app',       -- app | website (page path optional in source_page)
+        source_page TEXT,
+        ip TEXT,
+        user_agent TEXT,
+        handled_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_enquiries_created ON enquiries(created_at);
+
     -- Requests per day and module ("API Usage" / module usage on SaaS Usage).
     CREATE TABLE IF NOT EXISTS api_usage (
         day TEXT NOT NULL,

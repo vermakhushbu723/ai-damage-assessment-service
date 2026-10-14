@@ -24,6 +24,7 @@ const server = spawn(process.execPath, ['src/server.js'], {
         PORT: String(PORT),
         DATABASE_FILE: join(dir, 'test.db'),
         UPLOADS_DIR: join(dir, 'uploads'),
+        ENQUIRY_RATE_LIMIT: '4',
         JWT_SECRET: 'test-secret',
         BOOTSTRAP_ADMIN_EMAIL: 'admin@test.in',
         BOOTSTRAP_ADMIN_MOBILE: '9876543210',
@@ -86,7 +87,7 @@ const put = (p, b, o) => call('PUT', p, b, o);
 const del = (p, o) => call('DELETE', p, undefined, o);
 
 async function waitForServer() {
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 400; i++) {
         try {
             if ((await fetch(`${BASE}/health`)).ok) return;
         } catch { /* not up yet */ }
@@ -587,6 +588,31 @@ try {
     check('suspended agent cannot sign in', (await flogin('pia.agent', 'Agent@1234', 'agent')).status === 403);
     await post('/users/bulk-status', { ids: [agentA.id], status: 'Active' });
     check('app sign-ins in Audit Logs', (await get('/audit-logs')).data.some((e) => e.module === 'Field App' && e.reference === 'Login'));
+
+    // ---------- IBima Assist app: Contact enquiries ----------
+    const enquiry = { name: 'Neha Kapoor', organisation: 'Acme Insurance', email: 'NEHA@acme.in', phone: '+91 98200 11223', orgType: 'Insurer', interest: 'pre-inspection', message: 'We want to digitise break-in inspections.', source: '/contact' };
+    const pub = (body, headers = {}) => fetch(`${BASE}/public/enquiries`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    f = await fetch(`${BASE}/public/enquiries`, { method: 'OPTIONS', headers: { Origin: 'https://localhost', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'content-type' } });
+    check('app origin passes CORS preflight', f.status === 204 && f.headers.get('access-control-allow-origin') === 'https://localhost', f.status);
+    f = await pub({ ...enquiry, email: 'bad', phone: '12', interest: 'magic' }, { Origin: 'https://localhost' });
+    let ej = await f.json();
+    check('invalid enquiry -> 400 with per-field errors (website shape)', f.status === 400 && ej.errors.email && ej.errors.phone && ej.errors.interest && ej.message, ej);
+    check('enquiry needs a message', (await pub({ ...enquiry, message: '' })).status === 400);
+    f = await pub(enquiry, { Origin: 'https://localhost', 'User-Agent': 'Mozilla/5.0 (Linux; Android 14) IBimaAssistApp' });
+    ej = await f.json();
+    check('app enquiry accepted', f.status === 201 && ej.id === 'ENQ-1001' && f.headers.get('access-control-allow-origin') === 'https://localhost', ej);
+    check('admin list needs sign-in', (await get('/enquiries', { token: null })).status === 401);
+    check('field token cannot read enquiries', (await get('/enquiries', { token: FT })).status === 401);
+    r = await get('/enquiries');
+    const enq = r.data.find((e) => e.id === 'ENQ-1001');
+    check('enquiry shows in the admin', enq && enq.email === 'neha@acme.in' && enq.source === 'app' && enq.status === 'new' && enq.interest === 'pre-inspection' && enq.userAgent.includes('Android'), enq);
+    check('status validated', (await patch('/enquiries/ENQ-1001', { status: 'won' })).status === 400);
+    r = await patch('/enquiries/ENQ-1001', { status: 'contacted', notes: 'Called, demo on Friday' });
+    check('admin follows up (status + notes)', r.data?.status === 'contacted' && r.data.notes === 'Called, demo on Friday' && r.data.handledBy === 'Admin', r.data);
+    check('follow-up in Audit Logs', (await get('/audit-logs')).data.some((e) => e.module === 'Enquiries'));
+    for (let i = 0; i < 3; i++) await pub({ ...enquiry, email: `n${i}@acme.in` });
+    check('5th enquiry from one network -> 429', (await pub(enquiry)).status === 429);
+    check('delete (spam)', (await del('/enquiries/ENQ-1002')).status === 200 && (await get('/enquiries/ENQ-1002')).status === 404);
 
     // ---------- misc ----------
     check('unknown route -> 404', (await get('/nope')).status === 404);

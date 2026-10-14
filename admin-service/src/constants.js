@@ -57,6 +57,16 @@ export const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 export const FRAUD_STAGES = ['Intimation', 'Claim Details', 'AI ILA', 'Handler ILA', 'FLA', 'Recommendation', 'Payment Approval'];
 export const TRIGGER_STATUSES = ['Open', 'Under review', 'Escalated', 'Cleared'];
 
+// ---- enquiries (IBima Assist app Contact form; same lists as ibima-assist-website/src/data/enquiry.js) ----
+export const ENQUIRY_ORG_TYPES = ['Insurer', 'Broker / Agent', 'Surveyor / Loss assessor', 'Repair workshop', 'TPA', 'Corporate / Fleet', 'Other'];
+export const ENQUIRY_INTERESTS = [
+    'motor-claim-survey', 'pre-inspection', 'ai-damage-assessment', 'intimation-management', 'surveyor-mobile-app',
+    'partner-network-console', 'non-motor-claims', 'whole-platform', 'not-sure',
+];
+export const ENQUIRY_STATUSES = ['new', 'contacted', 'qualified', 'closed', 'spam'];
+export const ENQUIRY_PHONE_RE = /^[0-9+\-\s()]{8,18}$/;
+export const ENQUIRY_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 // ---- reports / system ----
 export const DATA_TYPES = ['Claims', 'Users', 'Survey', 'Payments', 'Audit Logs'];
 export const DOWNLOAD_FORMATS = ['CSV', 'Excel', 'JSON'];

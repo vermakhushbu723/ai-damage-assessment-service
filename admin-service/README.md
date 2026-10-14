@@ -123,6 +123,16 @@ What ingest does with each claim:
 (System Settings): `POST <endpoint> { channel, to, recipient, message, claim, reference }`
 with the API key as Bearer / X-API-Key. Nothing is marked delivered unless it answers 2xx.
 
+## IBima Assist app enquiries
+
+The Android app `ibima-assist-app` (the website's Capacitor build) posts its Contact form here;
+the admin panel lists them under **Enquiries** (sidebar group IBIMA ASSIST APP).
+
+| Method | Path | |
+|---|---|---|
+| POST | `/public/enquiries` (public, open CORS, 20 per IP per 10 min -- `ENQUIRY_RATE_LIMIT`) `{ name, organisation, email, phone, orgType?, interest?, message }` | App Contact form. Errors: `{ message, errors: { field: text } }` (the website's shape) |
+| GET · PATCH · DELETE | `/enquiries`, `/enquiries/:id` `{ status: new\|contacted\|qualified\|closed\|spam, notes }` | Enquiries page: list, follow-up, delete spam |
+
 ## Pre-Inspection Agent app (`/api/v1/field`)
 
 The Flutter app `preinspection_agent_app` signs in here with users created in

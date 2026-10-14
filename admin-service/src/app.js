@@ -16,6 +16,7 @@ import systemRouter from './routes/system.js';
 import { mountResources } from './routes/resources.js';
 import fieldRouter from './routes/field.js';
 import preinspectionsRouter from './routes/preinspections.js';
+import { publicRouter as publicEnquiriesRouter, adminRouter as enquiriesRouter } from './routes/enquiries.js';
 import { countUsage } from './services/usage.js';
 
 export const app = express();
@@ -23,6 +24,10 @@ export const app = express();
 // Behind nginx: trust X-Forwarded-* from the local proxy only.
 app.set('trust proxy', 'loopback');
 app.disable('x-powered-by');
+// Public form posts from the IBima Assist app (Capacitor WebView, origin
+// https://localhost) -- open CORS, no credentials, small bodies. Mounted
+// before the console's CORS allow-list so its preflight answers.
+app.use('/api/v1/public', cors({ origin: true }), express.json({ limit: '50kb' }), publicEnquiriesRouter);
 app.use(cors({ origin: settings.corsOrigins, credentials: true }));
 // Profile images travel as data URLs (max 1 MB file).
 app.use(express.json({ limit: '3mb' }));
@@ -48,6 +53,7 @@ api.use('/integrations', integrationsRouter);
 api.use('/system', systemRouter);
 api.use(changesRouter); // /changes, /audit-logs
 api.use(preinspectionsRouter); // /preinspections (admin), /media/:inspectionId/:mediaId (signed, public)
+api.use(enquiriesRouter); // /enquiries (admin) -- the app posts to /api/v1/public/enquiries
 api.use(communicationRouter); // GET /channels (+ sentToday), /comm-logs, send test, retry -- before the generic /channels resource
 mountResources(api); // branches, document-templates, comm-rules, comm-templates, channels, fraud-rules, authority-matrix, approval-history, compliance-log, triggers
 
