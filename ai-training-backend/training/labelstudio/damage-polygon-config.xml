@@ -1,0 +1,50 @@
+<!--
+  Label Studio labeling config for vehicle damage annotation.
+
+  Paste this into a new Label Studio project:
+    Project -> Settings -> Labeling Interface -> Code
+
+  The 6 label names below ARE this project's damage classes, spelled exactly
+  as training expects them (server/src/schemas/constants.js's
+  TRAINABLE_DAMAGE_TYPES, training/scripts/prepare_dataset.py's
+  DAMAGE_TYPE_NAMES). Rename one here and the importer will report it as an
+  unknown class instead of guessing, so keep them as they are.
+
+  PolygonLabels (not RectangleLabels) is deliberate: training fine-tunes a
+  YOLOv8 *segmentation* model, which learns the damage outline. Boxes would
+  throw that detail away.
+
+  Export from Label Studio as **COCO** -- that's the format that carries
+  polygons; training/scripts/import_annotation_export.py reads it directly.
+-->
+<View>
+  <Header value="Trace the outline of each damaged area, then pick its damage type."/>
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+
+  <PolygonLabels name="label" toName="image" strokeWidth="3" pointSize="small" opacity="0.4">
+    <Label value="crack"         background="#EF4444"/>
+    <Label value="dent"          background="#3B82F6"/>
+    <Label value="glass_shatter" background="#8B5CF6"/>
+    <Label value="lamp_broken"   background="#F97316"/>
+    <Label value="scratch"       background="#F59E0B"/>
+    <Label value="tire_flat"     background="#10B981"/>
+  </PolygonLabels>
+
+  <!--
+    Photo angle is metadata for the handler-facing app (it drives the
+    part-suggestion rule in the web app's utils/vehicleParts.js), not a YOLO
+    class -- the importer ignores it. Optional, but useful to capture while
+    someone is already looking at the photo.
+  -->
+  <Choices name="angle" toName="image" choice="single" showInLine="true">
+    <Choice value="Front"/>
+    <Choice value="Front Left"/>
+    <Choice value="Front Right"/>
+    <Choice value="Left"/>
+    <Choice value="Right"/>
+    <Choice value="Rear"/>
+    <Choice value="Rear Left"/>
+    <Choice value="Rear Right"/>
+    <Choice value="Other"/>
+  </Choices>
+</View>

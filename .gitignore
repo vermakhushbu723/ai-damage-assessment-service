@@ -1,29 +1,31 @@
-# Node service (server/)
-server/node_modules/
-server/.env
-server/*.db
-server/*.db-shm
-server/*.db-wal
-server/uploads/
+# AI / training backend: Node API (ai-training-backend/server/)
+ai-training-backend/server/node_modules/
+ai-training-backend/server/.env
+ai-training-backend/server/*.db
+ai-training-backend/server/*.db-shm
+ai-training-backend/server/*.db-wal
+ai-training-backend/server/uploads/
 
-# Python YOLO microservice (yolo-service/) and training/
-yolo-service/.venv/
-yolo-service/__pycache__/
-yolo-service/.env
-yolo-service/uvicorn*.log
-yolo-service/uvicorn.pid
-training/.venv/
-training/__pycache__/
-training/data/*/.data.resolved.yaml
-training/runs/
-training/raw_pool/
-training/data/*/labels/*.cache
+# Python YOLO microservice (ai-training-backend/yolo-service/) and ai-training-backend/training/
+ai-training-backend/yolo-service/.venv/
+ai-training-backend/yolo-service/__pycache__/
+ai-training-backend/yolo-service/.env
+ai-training-backend/yolo-service/uvicorn*.log
+ai-training-backend/yolo-service/uvicorn.pid
+ai-training-backend/training/.venv/
+ai-training-backend/training/__pycache__/
+ai-training-backend/training/data/*/.data.resolved.yaml
+ai-training-backend/training/runs/
+ai-training-backend/training/raw_pool/
+ai-training-backend/training/data/*/labels/*.cache
 *.pt
 
 # Training venv created per training/README.md ("python -m venv .venv-training"
-# at the service root) -- separate from yolo-service/.venv, holds torch +
+# in ai-training-backend/) -- separate from yolo-service/.venv, holds torch +
 # ultralytics (large, machine-specific, never commit).
 .venv-training/
+
+# Panel backends (panel-backends/*) keep their own .gitignore (.env, *.db, uploads/).
 
 # Anything else Python/Node leave lying around
 __pycache__/
@@ -31,3 +33,7 @@ __pycache__/
 node_modules/
 .DS_Store
 Thumbs.db
+
+# Label Studio (annotation tool) venv + its local DB/media
+.venv-labelstudio/
+.labelstudio-data/

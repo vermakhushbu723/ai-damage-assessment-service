@@ -1,10 +1,21 @@
 # VPS Deployment Guide
 
-Step-by-step for deploying `server/` + `yolo-service/` to a plain Ubuntu VPS (Hostinger,
+Step-by-step for deploying `ai-training-backend/server/` + `ai-training-backend/yolo-service/` to a plain Ubuntu VPS (Hostinger,
 DigitalOcean, AWS Lightsail, Contabo, etc.) — no GPU needed for this. This VPS only *serves*
 requests; real model training happens elsewhere (a GPU machine/cloud instance — see
-`docs/ARCHITECTURE.md` Section 8 and `training/README.md`) and the resulting checkpoint gets
+`ai-training-backend/docs/ARCHITECTURE.md` Section 8 and `ai-training-backend/training/README.md`) and the resulting checkpoint gets
 uploaded here afterward.
+
+## Folder layout
+
+The repo holds two separate groups of backends -- nothing is shared between them:
+
+| Folder | What | Services (PM2 name, port) |
+|---|---|---|
+| `ai-training-backend/` | AI damage assessment + model training | `server/` (`ai-damage-server`, 8000), `yolo-service/` (`yolo-service`, 8001), `training/` (offline, not a service), `docs/`, `.venv-training`, Label Studio |
+| `panel-backends/` | Backends of the web panels / apps | `superadmin-service/` (8030), `admin-service/` (8040), `auth-service/` (8010), `claims-service/` (8020) |
+
+Every service still runs from its own folder with its own `.env`, database file and `uploads/`.
 
 ## Current live setup (reference)
 
@@ -13,13 +24,13 @@ This is what's actually running today, as a concrete example of Steps 1-10 below
 | What | Where |
 |---|---|
 | VPS | `200.234.37.130`, Ubuntu, user `deploy` (see the warning in Step 8 about staying on this one user) |
-| Backend | `https://api.ibimaassist.online` → nginx → `server/` (port 8000) → `yolo-service/` (port 8001) |
+| Backend | `https://api.ibimaassist.online` → nginx → `ai-training-backend/server/` (port 8000) → `ai-training-backend/yolo-service/` (port 8001) |
 | Frontend | `https://ibimaassist.online` (+ `www.`) → nginx serving `car-damage-insurance-web-app`'s built `dist/` as static files |
 | SSL | Let's Encrypt via `certbot --nginx`, auto-renews (`certbot.timer`) |
 | Repos on VPS | `/home/deploy/ai-damage-assessment-service`, `/home/deploy/car-damage-insurance-web-app` |
 
 The frontend is **also** deployed separately on Vercel — both point at the same
-`https://api.ibimaassist.online` backend. `server/.env`'s `CORS_ORIGINS` is now a real allowlist
+`https://api.ibimaassist.online` backend. `ai-training-backend/server/.env`'s `CORS_ORIGINS` is now a real allowlist
 (both `ibimaassist.online` domains, the stable Vercel alias, a couple of older per-deploy Vercel
 preview URLs kept for safety, and localhost for dev) instead of the `*` wildcard used while things
 were still settling — see Step 10. If a *new* Vercel preview URL ever gets CORS-blocked, add it
@@ -47,15 +58,15 @@ check this first.
 
 ## superadmin-service (Super Admin console backend)
 
-Separate Node service in `superadmin-service/` (port **8030**, own `superadmin.db`, own JWT
+Separate Node service in `panel-backends/superadmin-service/` (port **8030**, own `superadmin.db`, own JWT
 secret, PM2 name `superadmin-service`). It is **not** exposed on `api.ibimaassist.online`:
 nginx proxies `https://superadmin.ibimaassist.online/api/` to it, so the console calls its
-API on its own domain (no CORS, no new DNS record). See `superadmin-service/README.md`.
+API on its own domain (no CORS, no new DNS record). See `panel-backends/superadmin-service/README.md`.
 
 First-time setup (as `deploy`):
 ```bash
 cd /home/deploy/ai-damage-assessment-service && git pull
-cd superadmin-service && npm ci --omit=dev
+cd panel-backends/superadmin-service && npm ci --omit=dev
 cp .env.example .env && nano .env
 #   JWT_SECRET=<long random>            (never reuse auth-service's)
 #   CORS_ORIGINS=https://superadmin.ibimaassist.online
@@ -78,19 +89,19 @@ location /api/ {
 ```
 then `sudo nginx -t && sudo systemctl reload nginx`.
 
-Redeploy: `git pull && cd superadmin-service && npm ci --omit=dev && pm2 restart superadmin-service`.
+Redeploy: `git pull && cd panel-backends/superadmin-service && npm ci --omit=dev && pm2 restart superadmin-service`.
 Backup = copy `superadmin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
 
 ## admin-service (Admin portal backend)
 
-Separate Node service in `admin-service/` (port **8040**, own `admin.db`, own JWT secret,
+Separate Node service in `panel-backends/admin-service/` (port **8040**, own `admin.db`, own JWT secret,
 PM2 name `admin-service`). nginx proxies `https://admin.ibimaassist.online/api/` to it, so
-the portal calls its API on its own domain. See `admin-service/README.md`.
+the portal calls its API on its own domain. See `panel-backends/admin-service/README.md`.
 
 First-time setup (as `deploy`):
 ```bash
 cd /home/deploy/ai-damage-assessment-service && git pull
-cd admin-service && npm ci --omit=dev
+cd panel-backends/admin-service && npm ci --omit=dev
 cp .env.example .env && nano .env
 #   JWT_SECRET=<long random>            (never reuse another service's)
 #   CORS_ORIGINS=https://admin.ibimaassist.online
@@ -119,7 +130,7 @@ location /api/ {
 ```
 then `sudo nginx -t && sudo systemctl reload nginx`.
 
-Redeploy: `git pull && cd admin-service && npm ci --omit=dev && pm2 restart admin-service`.
+Redeploy: `git pull && cd panel-backends/admin-service && npm ci --omit=dev && pm2 restart admin-service`.
 Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode)
 **and** the `uploads/` folder (Pre-Inspection app photos, videos, documents, signatures).
 
@@ -127,7 +138,7 @@ Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in 
 
 | Resource | Minimum | Recommended |
 |---|---|---|
-| RAM | 2GB | 4GB+ (a smaller box hits the same CPU memory-exhaustion issue documented in `training/README.md`'s CPU troubleshooting note, just sooner) |
+| RAM | 2GB | 4GB+ (a smaller box hits the same CPU memory-exhaustion issue documented in `ai-training-backend/training/README.md`'s CPU troubleshooting note, just sooner) |
 | CPU | 2 vCPU | 2-4 vCPU |
 | Storage | 20GB | 40GB+ (`ultralytics` + `torch` install is a few GB; leave room for uploads/, model checkpoints, training runs) |
 | OS | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
@@ -149,10 +160,10 @@ su - deploy
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
-node --version   # must be >= 22.5 (server/ needs the built-in node:sqlite module)
+node --version   # must be >= 22.5 (ai-training-backend/server/ needs the built-in node:sqlite module)
 ```
 
-## Step 4 — Install Python (for `yolo-service/`, and `training/` if you ever run training here)
+## Step 4 — Install Python (for `ai-training-backend/yolo-service/`, and `ai-training-backend/training/` if you ever run training here)
 
 ```bash
 sudo apt install -y python3.12 python3.12-venv python3-pip
@@ -173,7 +184,7 @@ cd ai-damage-assessment-service
 
 **Node service:**
 ```bash
-cd server
+cd ai-training-backend/server
 npm install
 cp .env.example .env
 nano .env   # set CORS_ORIGINS to your real frontend domain, review OLLAMA_MODEL etc.
@@ -190,9 +201,9 @@ cp .env.example .env
 
 ## Step 7 — Firewall: which ports to open
 
-**Do not expose `server/` (8000) or `yolo-service/` (8001) directly to the internet.** Only 443
+**Do not expose `ai-training-backend/server/` (8000) or `ai-training-backend/yolo-service/` (8001) directly to the internet.** Only 443
 (HTTPS, via the nginx reverse proxy in Step 9) should be public. `yolo-service` in particular
-should never be reachable from outside — it's only ever called server-to-server from `server/`.
+should never be reachable from outside — it's only ever called server-to-server from `ai-training-backend/server/`.
 
 ```bash
 sudo ufw allow OpenSSH
@@ -222,16 +233,16 @@ su - deploy
 sudo npm install -g pm2   # (needs sudo once, to install the pm2 CLI globally)
 
 # Node service
-cd ~/ai-damage-assessment-service/server
+cd ~/ai-damage-assessment-service/ai-training-backend/server
 pm2 start src/server.js --name ai-damage-server
 
 # Python yolo-service -- `--interpreter none` is required here. Without it,
 # PM2 defaults to running the script through *Node.js*, and since
 # `.venv/bin/uvicorn` is a Python script, that fails immediately with
 # `SyntaxError: Invalid or unexpected token` on its Python shebang line.
-cd ~/ai-damage-assessment-service/yolo-service
+cd ~/ai-damage-assessment-service/ai-training-backend/yolo-service
 pm2 start .venv/bin/uvicorn --name yolo-service --interpreter none \
-  --cwd ~/ai-damage-assessment-service/yolo-service -- app:app --host 127.0.0.1 --port 8001
+  --cwd ~/ai-damage-assessment-service/ai-training-backend/yolo-service -- app:app --host 127.0.0.1 --port 8001
 
 pm2 save
 sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u deploy --hp /home/deploy
@@ -331,7 +342,7 @@ must set the same variable in Vercel's own project settings:
 3. **Redeploy** — Vite bakes env vars in at build time, so an existing deployment won't pick up
    a new env var until you trigger a fresh build (Deployments tab → "..." → Redeploy)
 
-**Either way**, make sure `server/.env` on the VPS has your frontend's real origin in
+**Either way**, make sure `ai-training-backend/server/.env` on the VPS has your frontend's real origin in
 `CORS_ORIGINS` (not just `localhost`), then `pm2 restart ai-damage-server`:
 ```
 CORS_ORIGINS=http://localhost:5173,https://localhost:5173,https://your-app.vercel.app
@@ -348,7 +359,7 @@ curl -sI -H "Origin: https://your-app.vercel.app" https://your-backend-url/healt
 # should show: Access-Control-Allow-Origin: https://your-app.vercel.app
 ```
 Then run a real request from the deployed frontend (the AI ILA page) to confirm the full chain
-(browser → nginx-or-tunnel → server/ → yolo-service/) works.
+(browser → nginx-or-tunnel → ai-training-backend/server/ → ai-training-backend/yolo-service/) works.
 
 ## Step 12 (optional) — Ollama on the VPS, for real Llama report narration
 
@@ -362,7 +373,45 @@ pm2 start ollama --name ollama --interpreter none -- serve
 ```
 On a small VPS (2-4GB RAM), running Ollama + `yolo-service` at the same time can be tight —
 watch memory usage (`free -h`). Without Ollama, `/report` still works and returns a clearly-labeled
-templated narrative instead of failing (see `README.md`'s "what's real vs placeholder").
+templated narrative instead of failing (see `ai-training-backend/README.md`'s "what's real vs placeholder").
+
+## Moving an existing VPS to the two-folder layout (one time)
+
+Servers set up before the split run every service from the repo root (`server/`,
+`admin-service/`, ...). After pulling the new layout, git moves the tracked files, but the
+untracked runtime files (`.env`, `*.db`, `uploads/`, `node_modules/`, `yolo-service/.venv`,
+`training/` data, `.venv-training`) stay behind in the old folders. Do it in one go, as `deploy`:
+
+```bash
+cd /home/deploy/ai-damage-assessment-service
+pm2 stop ai-damage-server yolo-service superadmin-service admin-service
+# back up the databases, .env files and uploads first
+tar czf ~/backend-runtime-$(date +%F).tgz --ignore-failed-read \
+    server/*.db* server/.env server/uploads yolo-service/.env \
+    admin-service/*.db* admin-service/.env admin-service/uploads superadmin-service/*.db* superadmin-service/.env
+git pull                                   # tracked files move into the new folders
+# carry the untracked runtime files over, then drop the empty old folders
+for s in server yolo-service training docs; do
+    [ -d "$s" ] && rsync -a --remove-source-files "$s/" "ai-training-backend/$s/" && find "$s" -depth -type d -empty -delete
+done
+for s in superadmin-service admin-service auth-service claims-service; do
+    [ -d "$s" ] && rsync -a --remove-source-files "$s/" "panel-backends/$s/" && find "$s" -depth -type d -empty -delete
+done
+[ -d .venv-training ] && mv .venv-training ai-training-backend/
+# re-register the processes from their new folders (same names, same ports)
+pm2 delete ai-damage-server yolo-service superadmin-service admin-service
+cd ai-training-backend/server && pm2 start src/server.js --name ai-damage-server && cd ../..
+# a moved venv's bin/uvicorn still points at the old path -- run it through the venv's python
+cd ai-training-backend/yolo-service && pm2 start .venv/bin/python --name yolo-service --interpreter none \
+    --cwd /home/deploy/ai-damage-assessment-service/ai-training-backend/yolo-service \
+    -- -m uvicorn app:app --host 127.0.0.1 --port 8001 && cd ../..
+cd panel-backends/superadmin-service && pm2 start src/server.js --name superadmin-service && cd ../..
+cd panel-backends/admin-service && pm2 start src/server.js --name admin-service && cd ../..
+pm2 save
+curl -s 127.0.0.1:8000/health; curl -s 127.0.0.1:8030/api/v1/health; curl -s 127.0.0.1:8040/api/v1/health
+```
+
+nginx needs no change -- it proxies to ports, not folders.
 
 ## Redeploying after `git push` (routine updates)
 
@@ -374,11 +423,11 @@ ssh deploy@200.234.37.130
 cd /home/deploy/ai-damage-assessment-service
 git pull
 
-# Only if server/package.json changed (new dependency):
-cd server && npm install && cd ..
+# Only if ai-training-backend/server/package.json changed (new dependency):
+cd ai-training-backend/server && npm install && cd ../..
 
-# Only if yolo-service/requirements.txt changed:
-cd yolo-service && source .venv/bin/activate && pip install -r requirements.txt && deactivate && cd ..
+# Only if ai-training-backend/yolo-service/requirements.txt changed:
+cd ai-training-backend/yolo-service && source .venv/bin/activate && pip install -r requirements.txt && deactivate && cd ../..
 
 # Restart whichever service(s) actually changed -- restarting both is always safe too
 pm2 restart ai-damage-server
@@ -395,11 +444,12 @@ pm2 logs --lines 30 --nostream
 | What | Path |
 |---|---|
 | Repo root | `/home/deploy/ai-damage-assessment-service` |
-| Node service | `/home/deploy/ai-damage-assessment-service/server` |
-| Python yolo-service | `/home/deploy/ai-damage-assessment-service/yolo-service` |
+| Panel backends | `/home/deploy/ai-damage-assessment-service/panel-backends/{superadmin-service,admin-service}` |
+| Node service | `/home/deploy/ai-damage-assessment-service/ai-training-backend/server` |
+| Python yolo-service | `/home/deploy/ai-damage-assessment-service/ai-training-backend/yolo-service` |
 | pm2 process names | `ai-damage-server` (Node), `yolo-service` (Python), `ollama` (if installed) |
-| Node service `.env` | `/home/deploy/ai-damage-assessment-service/server/.env` |
-| yolo-service `.env` | `/home/deploy/ai-damage-assessment-service/yolo-service/.env` |
+| Node service `.env` | `/home/deploy/ai-damage-assessment-service/ai-training-backend/server/.env` |
+| yolo-service `.env` | `/home/deploy/ai-damage-assessment-service/ai-training-backend/yolo-service/.env` |
 | pm2 process names | `ai-damage-server`, `yolo-service`, `cf-tunnel` (if using Option B), `ollama` (if installed) |
 
 **⚠ Don't run `npm start` or `node src/server.js` directly on the VPS** (not even with `&` to
@@ -445,8 +495,8 @@ The request never reached the server — check, in order:
    **redeployed** (Vite bakes it in at build time). See Step 10.
 3. **CORS**: `curl -sI -H "Origin: https://your-frontend" https://your-backend/health | grep
    access-control` — if `Access-Control-Allow-Origin` is missing, add your frontend's origin to
-   `server/.env`'s `CORS_ORIGINS` on the VPS and `pm2 restart ai-damage-server`.
-4. **Firewall**: if using nginx (Option A), only 80/443 need to be open — `server/`'s port 8000
+   `ai-training-backend/server/.env`'s `CORS_ORIGINS` on the VPS and `pm2 restart ai-damage-server`.
+4. **Firewall**: if using nginx (Option A), only 80/443 need to be open — `ai-training-backend/server/`'s port 8000
    should stay closed to the internet. If testing directly against port 8000 (no reverse proxy at
    all), `sudo ufw allow 8000/tcp`.
 
@@ -455,7 +505,24 @@ The request never reached the server — check, in order:
 - `pm2 logs` — check errors
 - `pm2 list` — see status/uptime/restart-count of every managed process (remember: as the right
   user, see the Troubleshooting section above)
-- Watch disk space (`df -h`) — `uploads/`, `training/runs/`, and any raw_pool photos accumulate over time
+- Watch disk space (`df -h`) — `uploads/`, `ai-training-backend/training/runs/`, and any raw_pool photos accumulate over time
 - **Training doesn't happen on this VPS** — fine-tune elsewhere (GPU machine/cloud, see
-  `docs/ARCHITECTURE.md` Section 8), then `scp`/upload the resulting `best.pt` here and point
-  `yolo-service/.env`'s `YOLO_CAR_WEIGHTS` (etc.) at it, then `pm2 restart yolo-service`.
+  `ai-training-backend/docs/ARCHITECTURE.md` Section 8), then `scp`/upload the resulting `best.pt` here and point
+  `ai-training-backend/yolo-service/.env`'s `YOLO_CAR_WEIGHTS` (etc.) at it, then `pm2 restart yolo-service`.
+
+## Call Center portal backend (`panel-backends/callcenter-service`, port 8050)
+
+Portal: `car-damage-insurance-callcenter` at https://callsenter.ibimaassist.online (static `dist`,
+nginx `location /api/` -> `127.0.0.1:8050`). Users sign in with Admin > Create Users accounts.
+
+```bash
+cd /home/deploy/ai-damage-assessment-service/panel-backends/callcenter-service
+npm ci --omit=dev
+cp .env.example .env   # JWT_SECRET (random), ADMIN_SERVICE_KEY = admin-service CLAIMS_INGEST_KEY,
+                       # CORS_ORIGINS=https://callsenter.ibimaassist.online
+pm2 start src/server.js --name callcenter-service && pm2 save
+curl -s 127.0.0.1:8050/api/v1/health
+```
+
+Redeploy: `git pull`, `npm ci --omit=dev` (if package.json changed), `pm2 restart callcenter-service`.
+Back up `callcenter.db` + `uploads/` together. nginx needs `client_max_body_size 12m` for DMS uploads.
