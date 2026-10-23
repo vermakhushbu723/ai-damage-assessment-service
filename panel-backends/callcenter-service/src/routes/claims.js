@@ -515,6 +515,14 @@ const yearOf = (iso) => {
 const compact = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 const yesNo = (v) => (Array.isArray(v) ? v[0] : v);
 
+/** ISO timestamp -> "10:45 AM" (IST); anything else unchanged. */
+function clockTime(v) {
+    if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T/.test(v)) return v;
+    const d = new Date(new Date(v).getTime() + 330 * 60_000);
+    const h = d.getUTCHours();
+    return `${String(h % 12 || 12).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 /** First fill of Claim Details: what the intimation already captured. */
 function detailsFromIntimation(i) {
     const year = yearOf(i.manufacturingYear);
@@ -571,13 +579,13 @@ function infoFromClaim(row) {
         claimNumber: row.claim_no, insurerClaimReference: i.insurerClaimNumber, claimType: `${i.lineOfBusiness || 'Motor'} OD`,
         claimIntimationDate: row.submitted_at, policyNumber: row.policy_no, insurerTpa: i.insurerName,
         claimRegistrationDate: row.submitted_at, claimStatus: row.status, claimHandler: row.handler_name,
-        accidentDate: i.dateOfIncident, accidentTime: i.timeOfIncident,
+        accidentDate: i.dateOfIncident, accidentTime: clockTime(i.timeOfIncident),
         accidentLocation: [i.incidentArea, i.incidentCity, i.incidentState].filter(Boolean).join(', ') || undefined,
         // Spot / Final survey
         spotSurveyorName: spot?.surveyor_name, spotSurveyorId: sData(spot).surveyorCode, spotAssignmentDate: spot?.assigned_at,
         finalSurveyorName: fin?.surveyor_name, finalSurveyorDate: fin?.assigned_at, assessedAmount: net,
         // Loss
-        dateOfLoss: i.dateOfIncident, timeOfLoss: i.timeOfIncident,
+        dateOfLoss: i.dateOfIncident, timeOfLoss: clockTime(i.timeOfIncident),
         lossLocation: [i.incidentArea, i.incidentCity].filter(Boolean).join(', ') || undefined,
         causeOfLoss: d.causeOfAccident ?? i.natureOfLoss, lossInfoDescription: d.lossDescription ?? i.briefDescription,
         firDdrNumber: i.firNo, policeStation: i.policeStation, thirdPartyInvolvement: yesNo(i.thirdPartyInvolved),
@@ -602,7 +610,12 @@ function infoFromClaim(row) {
 router.get('/claims/:id/info', can(MODULES.details), (req, res) => {
     const row = loadClaim(req);
     const saved = getDoc(row.id, 'info');
-    res.json({ values: { ...infoFromClaim(row), ...(saved?.values ?? {}) }, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
+    const live = infoFromClaim(row);
+    const values = { ...live, ...(saved?.values ?? {}) };
+    // What the workflow owns is always current (not what was saved earlier).
+    for (const k of ['claimStatus', 'claimHandler', 'approvalStatus']) if (live[k]) values[k] = live[k];
+    for (const k of ['accidentTime', 'timeOfLoss']) values[k] = clockTime(values[k]);
+    res.json({ values, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
 });
 
 /** PUT /api/v1/claims/:id/info { values } -- Claim Information "Save Drift". */
