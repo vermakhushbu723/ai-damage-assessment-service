@@ -8,6 +8,7 @@ import documentsRouter, { filesRouter } from './routes/documents.js';
 import ilaRouter from './routes/ila.js';
 import settlementRouter from './routes/settlement.js';
 import communicationRouter from './routes/communication.js';
+import publicRouter from './routes/public.js';
 import { pendingCount } from './services/sync.js';
 import { aiConfigured } from './services/aiClient.js';
 import { gatewayConfigured } from './services/notifier.js';
@@ -33,6 +34,7 @@ api.get('/health', (_req, res) => res.json({
 // Public
 api.use('/auth', authRouter);
 api.use(filesRouter); // /files/:docId (signed links)
+api.use(publicRouter); // /s/:token (survey link, counts opens)
 
 // Signed in (each router checks the token + role permissions itself)
 api.use(claimsRouter); // /dashboard, /claims, intimation, survey link, remarks, audit, details

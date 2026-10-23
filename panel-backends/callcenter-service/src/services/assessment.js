@@ -70,11 +70,20 @@ export function seedParts(items) {
     }));
 }
 
-/** Stored liability document, or one seeded from the AI ILA rows. */
-export function liabilityDoc(claimId) {
-    const saved = getDoc(claimId, 'liability');
+/**
+ * Stored liability document of `kind` ('liability' = Handler ILA, 'fla' = FLA),
+ * or a seeded one: Handler ILA from the AI ILA rows, FLA from the Handler ILA.
+ */
+export function liabilityDoc(claimId, kind = 'liability') {
+    const saved = getDoc(claimId, kind);
     if (saved) return saved;
-    return { parts: seedParts(damageItems(claimId)), charges: {}, status: 'Draft', seeded: true };
+    if (kind === 'fla') {
+        const handler = getDoc(claimId, 'liability');
+        if (handler?.parts?.length) {
+            return { parts: handler.parts.map((p) => ({ ...p })), charges: { ...(handler.charges ?? {}) }, status: 'Draft', seeded: true, seededFrom: 'Handler ILA' };
+        }
+    }
+    return { parts: seedParts(damageItems(claimId)), charges: {}, status: 'Draft', seeded: true, seededFrom: 'AI ILA' };
 }
 
 const r0 = (n) => Math.round(n);

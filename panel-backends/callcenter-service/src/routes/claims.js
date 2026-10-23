@@ -86,7 +86,7 @@ router.get('/dashboard', can(MODULES.dashboard), (req, res) => {
     // New intimations: submitted in the range (or all), plus my own drafts on top.
     const filters = [];
     const params = [];
-    if (req.query.all !== '1') {
+    if (req.query.all !== '1' && !isDay(req.query.from)) {
         filters.push('submitted_at >= ?');
         params.push(from);
     }
@@ -97,6 +97,23 @@ router.get('/dashboard', can(MODULES.dashboard), (req, res) => {
     if (SOURCES.includes(req.query.source)) {
         filters.push('source = ?');
         params.push(req.query.source);
+    }
+    // Quick Filters: date range, location (city), insurer.
+    if (isDay(req.query.from)) {
+        filters.push('submitted_at >= ?');
+        params.push(new Date(`${req.query.from}T00:00:00+05:30`).toISOString());
+    }
+    if (isDay(req.query.to)) {
+        filters.push('submitted_at < ?');
+        params.push(new Date(new Date(`${req.query.to}T00:00:00+05:30`).getTime() + 86400_000).toISOString());
+    }
+    if (req.query.location) {
+        filters.push('city = ?');
+        params.push(String(req.query.location));
+    }
+    if (req.query.insurer) {
+        filters.push("json_extract(intimation, '$.insurerName') = ?");
+        params.push(String(req.query.insurer));
     }
     const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
     const drafts = allowed(req.user, MODULES.intimation, 'view')
@@ -109,7 +126,109 @@ router.get('/dashboard', can(MODULES.dashboard), (req, res) => {
         .map((r) => ({ ...toListItem(r), tatLeft: tatLeft(r.submitted_at) }));
     const allocation = pageOf(pending, Number(req.query.allocationPage) || 1, 5);
 
-    res.json({ range, stats, intimations, allocation });
+    res.json({ range, stats, intimations, allocation, filterOptions: filterOptions() });
+});
+
+const isDay = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** Values for the Quick Filters popup (what the data actually has). */
+function filterOptions() {
+    const distinct = (sql) => db.prepare(sql).all().map((r) => r.v).filter(Boolean);
+    return {
+        sources: SOURCES,
+        priorities: PRIORITIES,
+        locations: distinct("SELECT DISTINCT city AS v FROM claims WHERE submitted_at IS NOT NULL ORDER BY city"),
+        insurers: distinct("SELECT DISTINCT json_extract(intimation, '$.insurerName') AS v FROM claims WHERE submitted_at IS NOT NULL ORDER BY v"),
+    };
+}
+
+/** I-Bima Assist Unique ID: IBIMA-YYYY-NNNNNN, one running number per year. */
+function nextUniqueId() {
+    const year = new Date().getFullYear();
+    const row = db.prepare("SELECT MAX(CAST(substr(json_extract(link, '$.uniqueId'), 12) AS INTEGER)) AS n FROM claims WHERE json_extract(link, '$.uniqueId') LIKE ?")
+        .get(`IBIMA-${year}-%`);
+    return `IBIMA-${year}-${String((row.n ?? 0) + 1).padStart(6, '0')}`;
+}
+
+/**
+ * POST /api/v1/claims/:id/unique-id -- the refresh icon next to "I-Bima Assist
+ * Unique ID": issues one if the claim has none, or a new one while the survey
+ * link has not been sent yet.
+ */
+router.post('/claims/:id/unique-id', can(MODULES.intimation, 'edit'), (req, res) => {
+    const row = loadClaim(req);
+    const link = parseJson(row.link, {});
+    if (link.uniqueId && link.sentAt) throw conflict('The survey link with this ID is already sent; the ID cannot change.');
+    link.uniqueId = nextUniqueId();
+    setClaimFields(row.id, { link: JSON.stringify(link) });
+    audit(row.id, 'Unique ID issued', link.uniqueId, actorOf(req));
+    res.json({ uniqueId: link.uniqueId, claim: toClaim(findClaimRow(row.id)) });
+});
+
+const DAY = 86400_000;
+const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+
+/**
+ * GET /api/v1/dashboard/analytics?days=7|30 -- "Analyze Data": intimation
+ * trend, status overview, sources and the survey link sent summary.
+ */
+router.get('/dashboard/analytics', can(MODULES.dashboard), (req, res) => {
+    const days = [7, 30].includes(Number(req.query.days)) ? Number(req.query.days) : 7;
+    const subs = db.prepare('SELECT * FROM claims WHERE submitted_at IS NOT NULL').all();
+
+    // Trend: intimations per day (IST), oldest first.
+    const today = istDay(new Date().toISOString());
+    const trend = Array.from({ length: days }, (_, i) => {
+        const day = istDay(new Date(new Date(`${today}T12:00:00Z`).getTime() - (days - 1 - i) * DAY).toISOString());
+        return { date: day, count: subs.filter((r) => istDay(r.submitted_at) === day).length };
+    });
+
+    const linkOf = (r) => parseJson(r.link, {});
+    const total = subs.length;
+    const pct = (n) => (total ? Math.round((n / total) * 1000) / 10 : 0);
+    const status = [
+        { key: 'new', label: 'New Intimation', value: subs.filter((r) => Date.now() - new Date(r.submitted_at).getTime() < DAY).length },
+        { key: 'pending', label: 'Pending Allocation', value: subs.filter((r) => r.status === 'Open' && !r.handler_id).length },
+        { key: 'link', label: 'Link Sent', value: subs.filter((r) => linkOf(r).sentAt).length },
+        { key: 'allocated', label: 'Allocated', value: subs.filter((r) => r.handler_id).length },
+    ].map((s) => ({ ...s, pct: pct(s.value) }));
+
+    const sourceOf = (r) => {
+        const i = parseJson(r.intimation, {});
+        if (i.channelType === 'Email') return 'Email';
+        if (r.source === 'App') return 'Mobile App';
+        if (r.source === 'Website') return 'Website';
+        if (r.source === 'Call Center') return 'Call Center';
+        return 'Others';
+    };
+    const sources = ['Call Center', 'Website', 'Mobile App', 'Email', 'Others'].map((label) => {
+        const value = subs.filter((r) => sourceOf(r) === label).length;
+        return { key: label, label, value, pct: pct(value) };
+    });
+
+    // Survey links per day sent: opened (via /s/:token) and completed (vehicle photos uploaded after sending).
+    const photosAfter = db.prepare("SELECT 1 FROM documents WHERE claim_id = ? AND doc_type = 'vehicle-photos' AND uploaded_at >= ? LIMIT 1");
+    const byDay = new Map();
+    for (const r of db.prepare('SELECT id, link FROM claims').all()) {
+        const l = linkOf(r);
+        if (!l.sentAt) continue;
+        const day = istDay(l.sentAt);
+        const e = byDay.get(day) ?? { date: day, sent: 0, accessed: 0, completed: 0 };
+        e.sent += 1;
+        if (l.accessedAt) e.accessed += 1;
+        if (photosAfter.get(r.id, l.sentAt)) e.completed += 1;
+        byDay.set(day, e);
+    }
+    const summary = [...byDay.values()].sort((a, b) => b.date.localeCompare(a.date))
+        .map((e) => ({ ...e, accessRate: e.sent ? Math.round((e.accessed / e.sent) * 100) : 0 }));
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const totalPages = Math.max(1, Math.ceil(summary.length / 5));
+    const p = Math.min(page, totalPages);
+
+    res.json({
+        days, total, trend, status, sources,
+        linkSummary: { rows: summary.slice((p - 1) * 5, p * 5), page: p, totalPages, total: summary.length, tracking: !!settings.publicUrl },
+    });
 });
 
 // ---------- claims ----------
@@ -198,7 +317,7 @@ router.post('/claims', can(MODULES.intimation, 'create'), (req, res) => {
     const actor = actorOf(req);
     const id = transaction(() => {
         const newId = insertClaim(intimation, actor);
-        if (req.body?.link) setClaimFields(newId, { link: JSON.stringify(cleanLinkSettings(req.body.link)) });
+        setClaimFields(newId, { link: JSON.stringify({ ...cleanLinkSettings(req.body?.link ?? {}), uniqueId: nextUniqueId() }) });
         audit(newId, 'Draft saved', 'Intimation saved as draft', actor);
         return newId;
     });
@@ -285,7 +404,9 @@ router.post('/claims/:id/survey-link', can(MODULES.intimation, 'edit'), asyncHan
     if (via.includes('Email') && !isEmail(link.email)) throw badRequest('Enter a valid recipient email.');
 
     link.token = link.token ?? randomToken(18);
-    link.url = `${settings.surveyLinkBase}?token=${encodeURIComponent(link.token)}`;
+    link.url = settings.publicUrl
+        ? `${settings.publicUrl}/api/v1/s/${encodeURIComponent(link.token)}`
+        : `${settings.surveyLinkBase}?token=${encodeURIComponent(link.token)}`;
     const recipientLabel = link.recipients.includes('Both') ? 'Insured & Workshop' : link.recipients.join(' & ');
     const actor = actorOf(req);
     const i = parseJson(row.intimation, {});
@@ -362,35 +483,58 @@ router.get('/claims/:id/audit', (req, res) => {
     })));
 });
 
-// ---------- Claim Details (vehicle / insured / loss / vahan tabs) ----------
+// ---------- Claim Details (vehicle / driver / loss / vahan tabs) + Claim Information (12 tabs) ----------
 
-const DETAIL_FIELDS = [
-    'vehicleRegNo', 'make', 'model', 'variant', 'yearOfManufacture', 'fuelType', 'engineNumber', 'chassisNumber', 'odometer', 'bodyType', 'colour', 'vehicleAge',
-    'insuredName', 'contactNumber', 'emailId', 'address',
-    'dateOfIncident', 'timeOfIncident', 'lossLocation', 'natureOfLoss', 'description',
-    'vahanRegNo', 'vahanRegDate', 'vahanOwner', 'vahanFitness', 'vahanTax', 'vahanInsurance',
-];
+const FIELD_KEY = /^[A-Za-z][A-Za-z0-9]{0,40}$/;
+
+/** Form values: strings (or string lists, e.g. Parts Damage tags), at most 200 fields. */
+function cleanValues(input) {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw badRequest('values must be an object.');
+    const out = {};
+    for (const [k, v] of Object.entries(input).slice(0, 200)) {
+        if (!FIELD_KEY.test(k) || v === undefined || v === null || v === '') continue;
+        if (Array.isArray(v)) out[k] = v.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 80)).slice(0, 40);
+        else if (['string', 'number', 'boolean'].includes(typeof v)) out[k] = String(v).trim().slice(0, 2000);
+    }
+    for (const k of Object.keys(out)) {
+        if (/(Contact|Mobile)(Number)?$/i.test(k) && typeof out[k] === 'string' && out[k]) {
+            const p = normalizePhone(out[k]);
+            const label = k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
+            if (!p) throw badRequest(`${label} must be a valid 10-digit mobile number.`);
+            out[k] = p;
+        }
+        if (/(email|EmailAddress)$/i.test(k) && out[k] && !isEmail(out[k])) throw badRequest('Email address is not valid.');
+    }
+    return out;
+}
+
+const yearOf = (iso) => {
+    const y = iso ? new Date(iso).getFullYear() : NaN;
+    return Number.isNaN(y) ? null : y;
+};
+const compact = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ''));
+const yesNo = (v) => (Array.isArray(v) ? v[0] : v);
 
 /** First fill of Claim Details: what the intimation already captured. */
 function detailsFromIntimation(i) {
-    const year = i.manufacturingYear ? new Date(i.manufacturingYear).getFullYear() : null;
-    return {
+    const year = yearOf(i.manufacturingYear);
+    return compact({
         vehicleRegNo: i.registrationNumber, make: i.make, model: i.model, variant: i.variant, fuelType: i.fuelType,
         engineNumber: i.engineNo, chassisNumber: i.chassisNumber, colour: i.colour,
-        yearOfManufacture: year && !Number.isNaN(year) ? String(year) : undefined,
-        vehicleAge: year && !Number.isNaN(year) ? `${new Date().getFullYear() - year} Years` : undefined,
-        insuredName: i.insuredName, contactNumber: i.insuredContact, emailId: i.insuredEmail, address: i.insuredAddress,
-        dateOfIncident: i.dateOfIncident, timeOfIncident: i.timeOfIncident,
-        lossLocation: [i.incidentArea, i.incidentCity].filter(Boolean).join(', ') || undefined,
-        natureOfLoss: i.natureOfLoss, description: i.briefDescription,
-        vahanRegNo: i.registrationNumber, vahanOwner: i.insuredName,
-    };
+        yearOfManufacture: year ? String(year) : undefined,
+        vehicleAge: year ? `${new Date().getFullYear() - year} Years` : undefined,
+        driverName: i.driverName, driverLicenseNumber: i.drivingLicenseNumber,
+        driverInjuryState: yesNo(i.driverInjured) === 'Yes' ? 'Minor' : undefined,
+        causeOfAccident: i.natureOfLoss, lossDescription: i.briefDescription,
+        rcOwnerName: i.insuredName, vahanEngineNumber: i.engineNo, vahanChassisNumber: i.chassisNumber,
+        dlHolderName: i.driverName,
+    });
 }
 
 router.get('/claims/:id/details', can(MODULES.details), (req, res) => {
     const row = loadClaim(req);
     const saved = getDoc(row.id, 'details');
-    const values = saved?.values ?? Object.fromEntries(Object.entries(detailsFromIntimation(parseJson(row.intimation, {}))).filter(([, v]) => v));
+    const values = saved?.values ?? detailsFromIntimation(parseJson(row.intimation, {}));
     res.json({ values, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
 });
 
@@ -398,19 +542,7 @@ router.get('/claims/:id/details', can(MODULES.details), (req, res) => {
 router.put('/claims/:id/details', can(MODULES.details, 'edit'), (req, res) => {
     const row = loadClaim(req);
     if (row.status === 'Draft') throw badRequest('Submit the intimation first.');
-    const input = req.body?.values ?? {};
-    const values = {};
-    for (const k of DETAIL_FIELDS) {
-        const v = input[k];
-        if (v === undefined || v === null || v === '') continue;
-        values[k] = String(v).trim().slice(0, 500);
-    }
-    if (values.contactNumber) {
-        const p = normalizePhone(values.contactNumber);
-        if (!p) throw badRequest('Contact number must be a valid 10-digit mobile number.');
-        values.contactNumber = p;
-    }
-    if (values.emailId && !isEmail(values.emailId)) throw badRequest('Email ID is not a valid email address.');
+    const values = cleanValues(req.body?.values ?? {});
     const actor = actorOf(req);
     const saved = transaction(() => {
         const doc = putDoc(row.id, 'details', { values }, actor);
@@ -420,6 +552,68 @@ router.put('/claims/:id/details', can(MODULES.details, 'edit'), (req, res) => {
     });
     if (req.body?.complete) syncClaim(row.id).catch(() => {});
     res.json({ values: saved.values, savedAt: saved.updatedAt, savedBy: saved.updatedBy, claim: toClaim(findClaimRow(row.id)) });
+});
+
+/** Claim Information first fill: everything the portal already knows about the claim. */
+function infoFromClaim(row) {
+    const i = parseJson(row.intimation, {});
+    const d = getDoc(row.id, 'details')?.values ?? {};
+    const sa = (t) => db.prepare("SELECT * FROM surveyor_assignments WHERE claim_id = ? AND survey_type = ? AND status = 'Assigned' ORDER BY assigned_at DESC LIMIT 1").get(row.id, t);
+    const spot = sa('spot');
+    const fin = sa('final');
+    const sData = (a) => parseJson(a?.data, {});
+    const liability = getDoc(row.id, 'fla') ?? getDoc(row.id, 'liability');
+    const payment = getDoc(row.id, 'payment');
+    const year = yearOf(i.manufacturingYear);
+    const net = liability?.totals?.netLiability ? String(liability.totals.netLiability) : undefined;
+    return compact({
+        // Claim Information
+        claimNumber: row.claim_no, insurerClaimReference: i.insurerClaimNumber, claimType: `${i.lineOfBusiness || 'Motor'} OD`,
+        claimIntimationDate: row.submitted_at, policyNumber: row.policy_no, insurerTpa: i.insurerName,
+        claimRegistrationDate: row.submitted_at, claimStatus: row.status, claimHandler: row.handler_name,
+        accidentDate: i.dateOfIncident, accidentTime: i.timeOfIncident,
+        accidentLocation: [i.incidentArea, i.incidentCity, i.incidentState].filter(Boolean).join(', ') || undefined,
+        // Spot / Final survey
+        spotSurveyorName: spot?.surveyor_name, spotSurveyorId: sData(spot).surveyorCode, spotAssignmentDate: spot?.assigned_at,
+        finalSurveyorName: fin?.surveyor_name, finalSurveyorDate: fin?.assigned_at, assessedAmount: net,
+        // Loss
+        dateOfLoss: i.dateOfIncident, timeOfLoss: i.timeOfIncident,
+        lossLocation: [i.incidentArea, i.incidentCity].filter(Boolean).join(', ') || undefined,
+        causeOfLoss: d.causeOfAccident ?? i.natureOfLoss, lossInfoDescription: d.lossDescription ?? i.briefDescription,
+        firDdrNumber: i.firNo, policeStation: i.policeStation, thirdPartyInvolvement: yesNo(i.thirdPartyInvolved),
+        // Workshop
+        workshopName: i.workshopName, workshopAddress: i.workshopAddress, workshopContactPerson: i.contactPersonName,
+        // Driver
+        driverName: d.driverName ?? i.driverName, driverContactNumber: d.driverContact,
+        driverLicenseNumber: d.driverLicenseNumber ?? i.drivingLicenseNumber,
+        // Vehicle
+        registrationNumber: row.vehicle_no, registrationDate: i.registrationDate, make: d.make ?? i.make, model: d.model ?? i.model,
+        variant: d.variant ?? i.variant, fuelType: d.fuelType ?? i.fuelType, manufacturingYear: year ? String(year) : undefined,
+        chassisNumber: d.chassisNumber ?? i.chassisNumber, engineNumber: d.engineNumber ?? i.engineNo, colour: d.colour ?? i.colour,
+        // Insured
+        insuredName: row.insured_name, insuredMobileNumber: row.mobile, insuredEmailAddress: i.insuredEmail, registeredAddress: i.insuredAddress,
+        insuredPolicyNumber: row.policy_no, policyStartDate: i.policyStartDate, policyExpiryDate: i.policyEndDate, rcOwnerName: d.rcOwnerName,
+        // Claim provision
+        initialClaimProvision: row.amount ? String(row.amount) : undefined, surveyorAssessedLiability: net, approvalStatus: payment?.status,
+    });
+}
+
+/** GET /api/v1/claims/:id/info -- Claim Information tabs (saved values over the first fill). */
+router.get('/claims/:id/info', can(MODULES.details), (req, res) => {
+    const row = loadClaim(req);
+    const saved = getDoc(row.id, 'info');
+    res.json({ values: { ...infoFromClaim(row), ...(saved?.values ?? {}) }, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
+});
+
+/** PUT /api/v1/claims/:id/info { values } -- Claim Information "Save Drift". */
+router.put('/claims/:id/info', can(MODULES.details, 'edit'), (req, res) => {
+    const row = loadClaim(req);
+    if (row.status === 'Draft') throw badRequest('Submit the intimation first.');
+    const values = cleanValues(req.body?.values ?? {});
+    const actor = actorOf(req);
+    const doc = putDoc(row.id, 'info', { values }, actor);
+    audit(row.id, 'Claim information saved', `${Object.keys(values).length} fields`, actor);
+    res.json({ values: doc.values, savedAt: doc.updatedAt, savedBy: doc.updatedBy });
 });
 
 export default router;

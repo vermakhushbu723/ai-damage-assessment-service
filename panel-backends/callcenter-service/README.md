@@ -44,7 +44,7 @@ Handlers, surveyors and approvers are the Admin users with roles
 npm install
 cp .env.example .env   # set ADMIN_SERVICE_KEY = admin-service CLAIMS_INGEST_KEY
 npm start
-npm run test:api       # starts admin-service + this service on throwaway DBs (120 checks)
+npm run test:api       # starts admin-service + this service on throwaway DBs (141 checks)
 ```
 
 ## API (all under `/api/v1`, Bearer token from `/auth/login`)
@@ -52,15 +52,15 @@ npm run test:api       # starts admin-service + this service on throwaway DBs (1
 | Area | Endpoints |
 |---|---|
 | Auth | `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`, `POST /auth/change-password` |
-| Dashboard | `GET /dashboard?range=24h\|7d\|30d&all=1&priority=&source=&page=&allocationPage=` |
+| Dashboard | `GET /dashboard?range=&all=1&priority=&source=&from=&to=&location=&insurer=&page=&allocationPage=`, `GET /dashboard/analytics?days=7\|30` (Analyze Data), public `GET /s/:token` (survey link, counts opens) |
 | Claims | `GET /claims`, `GET /claims/next-id`, `POST /claims` (draft), `GET/PATCH /claims/:id`, `POST /claims/:id/submit`, `POST /claims/:id/survey-link` |
 | Action bar | `GET/POST /claims/:id/remarks`, `GET /claims/:id/audit` |
 | Handler | `GET /handlers`, `GET/POST /claims/:id/handler` |
 | Surveyor | `GET /surveyors`, `GET/POST /claims/:id/surveyors`, `POST /claims/:id/surveyors/:aid/cancel` |
-| Claim details | `GET/PUT /claims/:id/details` |
-| Documents DMS | `GET /claims/:id/documents`, `PUT /claims/:id/documents/:type` (raw file, `X-File-Name`), `POST /claims/:id/documents/process`, `GET /files/:docId?exp&sig` (signed) |
+| Claim details | `GET/PUT /claims/:id/details` (vehicle / driver / loss / vahan), `GET/PUT /claims/:id/info` (Claim Information, 12 tabs), `POST /claims/:id/unique-id` |
+| Documents DMS | `GET /claims/:id/documents`, `PUT /claims/:id/documents/:type` (raw file, `X-File-Name`), `POST /claims/:id/documents/process`, `GET .../documents/download.zip`, `GET .../documents/download.pdf`, `GET /files/:docId?exp&sig` (signed) |
 | AI ILA | `GET /claims/:id/ai-ila`, `POST .../run`, `PATCH/DELETE .../items/:itemId`, `POST .../items`, `POST .../items/merge`, `POST .../approve-all`, `PUT .../note`, `POST .../decision`, `POST .../report`, `GET .../report.pdf`, `GET .../export.csv` |
-| Handler ILA | `GET /claims/:id/liability`, `POST/PATCH .../parts`, `PUT .../charges`, `POST .../report` (PDF), `POST .../submit` |
+| Handler ILA / FLA | `GET /claims/:id/liability` (HANDLER ILA) and `/claims/:id/fla` (FLA, seeded from Handler ILA; its submit completes the FLA step): `POST/PATCH .../parts`, `PUT .../charges`, `POST .../report` (PDF), `POST .../submit` |
 | Payment | `GET/PUT /claims/:id/payment`, `POST /claims/:id/payment/submit` |
 | Paybill | `GET/PUT /claims/:id/paybill`, `POST /claims/:id/paybill/pdf` |
 | Letters | `GET/POST /claims/:id/letters`, `POST .../letters/preview.pdf`, `GET .../letters/:letterId/pdf` |

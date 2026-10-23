@@ -8,6 +8,9 @@ import { audit } from '../models/claimModel.js';
 import { saveFile, readFile, signedFileUrl, verifyFileSignature } from '../services/fileStore.js';
 import { nextSequentialId, sha256 } from '../utils/ids.js';
 import { loadClaim } from './claims.js';
+import { buildZip } from '../utils/zip.js';
+import { pdfImage, sendPdf } from '../utils/pdf.js';
+import { fmtDateTime } from '../utils/format.js';
 
 // Documents DMS: per-claim uploads by document type. Types that hold one
 // paper (RC, DL, policy, ...) keep only the newest file as current; the older
@@ -25,6 +28,7 @@ export const toDocument = (d) => ({
     size: d.size,
     sha256: d.sha256,
     uploadedBy: d.uploaded_by_name,
+    uploadedById: d.uploaded_by,
     uploadedAt: d.uploaded_at,
     url: signedFileUrl(d.id),
 });
@@ -122,6 +126,56 @@ router.post('/claims/:id/documents/process', can(MODULES.dms, 'edit'), (req, res
     if (state.pending.length) throw badRequest(`${state.pending.length} document(s) still pending: ${state.pending.join(', ')}.`, { pending: state.pending });
     audit(row.id, 'Documents processed', `${state.files.length} file(s) verified complete`, actorOf(req));
     res.json({ ok: true, ...state });
+});
+
+/** Current files of the claim with their bytes (missing files skipped). */
+function filesWithData(row) {
+    return db.prepare('SELECT * FROM documents WHERE claim_id = ? AND replaced_at IS NULL ORDER BY doc_type, uploaded_at').all(row.id)
+        .map((d) => ({ d, data: readFile(row.id, d.stored_name) }))
+        .filter((f) => f.data);
+}
+
+/** GET /api/v1/claims/:id/documents/download.zip -- "Download As Zip File": every current file, one folder per type. */
+router.get('/claims/:id/documents/download.zip', can(MODULES.dms, 'download'), (req, res) => {
+    const row = loadClaim(req);
+    const files = filesWithData(row);
+    if (!files.length) throw badRequest('No documents uploaded for this claim yet.');
+    const seen = new Set();
+    const zip = buildZip(files.map(({ d, data }) => {
+        let name = `${DOC_TYPES[d.doc_type] ?? d.doc_type}/${d.file_name}`.replace(/[\\:*?"<>|]/g, '_');
+        if (seen.has(name)) name = name.replace(/(\.[^./]+)?$/, `-${d.id}$1`);
+        seen.add(name);
+        return { name, data, date: new Date(d.uploaded_at) };
+    }));
+    audit(row.id, 'Documents downloaded', `ZIP · ${files.length} file(s)`, actorOf(req));
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="Documents-${row.claim_no}.zip"`);
+    res.setHeader('Content-Length', zip.length);
+    res.end(zip);
+});
+
+/**
+ * GET /api/v1/claims/:id/documents/download.pdf -- "Download As PDF": the
+ * document register plus every JPG / PNG on its own page (PDF files and other
+ * images are listed; they are in the ZIP).
+ */
+router.get('/claims/:id/documents/download.pdf', can(MODULES.dms, 'download'), (req, res) => {
+    const row = loadClaim(req);
+    const files = filesWithData(row);
+    if (!files.length) throw badRequest('No documents uploaded for this claim yet.');
+    const pages = files.map((f) => ({ ...f, image: f.d.mime.startsWith('image/') ? pdfImage(f.data) : null }));
+    audit(row.id, 'Documents downloaded', `PDF · ${files.length} file(s)`, actorOf(req));
+    sendPdf(res, `Documents-${row.claim_no}.pdf`, [
+        { text: 'IBIMA ASSIST - CLAIM DOCUMENTS', size: 14, bold: true, align: 'center' },
+        { text: `${row.claim_no} · ${row.insured_name ?? ''} · ${row.vehicle_no ?? ''}`, size: 9, align: 'center', gap: 2 },
+        { rule: true, gap: 8 },
+        ...pages.map((p, i) => ({
+            cols: [`${i + 1}. ${DOC_TYPES[p.d.doc_type] ?? p.d.doc_type} - ${p.d.file_name}${p.image ? '' : ' (in ZIP)'}`, `${p.d.uploaded_by_name ?? ''} ${fmtDateTime(p.d.uploaded_at)}`],
+            size: 9,
+        })),
+        { text: `Generated ${fmtDateTime(nowIso())}`, size: 8, gap: 12 },
+        ...pages.filter((p) => p.image).map((p) => ({ image: p.image, caption: `${DOC_TYPES[p.d.doc_type] ?? p.d.doc_type} - ${p.d.file_name}` })),
+    ]);
 });
 
 export default router;

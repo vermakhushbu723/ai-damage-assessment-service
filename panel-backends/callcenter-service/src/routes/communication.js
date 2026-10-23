@@ -122,46 +122,56 @@ router.post('/claims/:id/letters', can(MODULES.letters, 'create'), asyncHandler(
     const row = loadClaim(req);
     if (row.status === 'Draft') throw badRequest('Submit the intimation first.');
     const clean = cleanLetter(req.body ?? {});
-    const channel = LETTER_CHANNELS[req.body?.channel];
-    if (!channel) throw badRequest('Choose how the letter is sent.');
+    // "Letter will be sent via": one or more of SMS / Email / WhatsApp (`channel` = old single choice).
+    const keys = Array.isArray(req.body?.channels) ? req.body.channels : req.body?.channel ? [req.body.channel] : [];
+    const channels = [...new Set(keys.map((k) => LETTER_CHANNELS[k]).filter(Boolean))];
+    if (!channels.length) throw badRequest('Choose how the letter is sent.');
     const mobile = normalizePhone(req.body?.contact?.mobile);
     const email = String(req.body?.contact?.email ?? '').trim();
-    if (channel === 'Email' && !isEmail(email)) throw badRequest('Enter a valid email ID.');
-    if (channel !== 'Email' && !mobile) throw badRequest('Enter a valid 10-digit mobile number.');
+    if (channels.includes('Email') && !isEmail(email)) throw badRequest('Enter a valid email ID.');
+    if (channels.some((c) => c !== 'Email') && !mobile) throw badRequest('Enter a valid 10-digit mobile number.');
     const body = letterBody(row, clean);
-    const to = channel === 'Email' ? email : mobile;
     const letterNo = nextDailyId('letters', 'LET');
-    const outcome = await dispatch({
-        channel, to, subject: `${LETTER_META.title} · ${letterNo}`,
-        message: [body.intro, body.lead, ...body.items.map((x, n) => `${n + 1}. ${x}`), `Please respond by ${body.deadline}.`].join('\n'),
-        claimNo: row.claim_no, reference: letterNo,
-    });
+    const deliveries = [];
+    for (const channel of channels) {
+        const to = channel === 'Email' ? email : mobile;
+        const outcome = await dispatch({
+            channel, to, subject: `${LETTER_META.title} · ${letterNo}`,
+            message: [body.intro, body.lead, ...body.items.map((x, n) => `${n + 1}. ${x}`), `Please respond by ${body.deadline}.`].join('\n'),
+            claimNo: row.claim_no, reference: letterNo,
+        });
+        deliveries.push({ channel, to, ...outcome });
+    }
+    const status = deliveries.some((d) => d.status === 'Delivered') ? 'Delivered' : deliveries.every((d) => d.status === 'Failed') ? 'Failed' : 'Pending';
     const actor = actorOf(req);
     transaction(() => {
         db.prepare('INSERT INTO letters (id, claim_id, data, channel, created_by, created_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-            .run(letterNo, row.id, JSON.stringify({ ...clean, body, contact: { mobile, email }, status: outcome.status }), channel, actor.id, actor.name, nowIso());
-        insertCommunication(row.id, {
-            direction: 'sent',
-            type: 'Letter Sent',
-            tag: `${LETTER_TYPES[clean.form.letterType]} Letter`,
-            reference: `Letter No.: ${letterNo}`,
-            description: LETTER_REASONS[clean.form.reason],
-            subDescription: outcome.error ?? 'Requested documents / details:',
-            bullets: body.items,
-            person: 'Ibima Assist',
-            personMeta: `(${actor.name})`,
-            channel,
-            recipient: to,
-            status: outcome.status,
-            awaitingResponse: outcome.status !== 'Failed',
-            responseDue: clean.form.responseDueBy,
-            letterId: letterNo,
-            createdBy: actor.id,
-        });
-        audit(row.id, 'Letter issued', `${letterNo} · ${channel}: ${outcome.status}`, actor);
+            .run(letterNo, row.id, JSON.stringify({ ...clean, body, contact: { mobile, email }, status, deliveries }), channels.join(', '), actor.id, actor.name, nowIso());
+        for (const d of deliveries) {
+            insertCommunication(row.id, {
+                direction: 'sent',
+                type: 'Letter Sent',
+                tag: `${LETTER_TYPES[clean.form.letterType]} Letter`,
+                reference: `Letter No.: ${letterNo}`,
+                description: LETTER_REASONS[clean.form.reason],
+                subDescription: d.error ?? 'Requested documents / details:',
+                bullets: body.items,
+                person: 'Ibima Assist',
+                personMeta: `(${actor.name})`,
+                channel: d.channel,
+                recipient: d.to,
+                status: d.status,
+                awaitingResponse: d.status !== 'Failed',
+                responseDue: clean.form.responseDueBy,
+                letterId: letterNo,
+                createdBy: actor.id,
+            });
+        }
+        audit(row.id, 'Letter issued', `${letterNo} · ${deliveries.map((d) => `${d.channel}: ${d.status}`).join(', ')}`, actor);
     });
     flush().catch(() => {});
-    res.status(201).json({ letter: toLetter(db.prepare('SELECT * FROM letters WHERE id = ?').get(letterNo)), delivery: outcome });
+    const failed = deliveries.find((d) => d.status === 'Failed');
+    res.status(201).json({ letter: toLetter(db.prepare('SELECT * FROM letters WHERE id = ?').get(letterNo)), delivery: { status, error: failed?.error ?? deliveries.find((d) => d.error)?.error, deliveries } });
 }));
 
 /** GET /api/v1/claims/:id/letters/:letterId/pdf */

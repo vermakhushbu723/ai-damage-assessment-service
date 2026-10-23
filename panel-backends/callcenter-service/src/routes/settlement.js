@@ -27,14 +27,28 @@ const openClaim = (req) => {
     return row;
 };
 
-// ======================= Handler ILA (liability) =======================
+// ======================= Handler ILA + FLA (liability) =======================
+// Two documents with the same shape: 'liability' = HANDLER ILA (the handler's
+// assessment), 'fla' = FLA (final loss assessment, seeded from the Handler ILA).
+// Submitting the FLA completes the journey's FLA step.
 
-function liabilityState(row) {
-    const doc = liabilityDoc(row.id);
+const KINDS = {
+    liability: { module: MODULES.handlerIla, title: 'HANDLER ILA - INTELLIGENT LIABILITY ASSESSMENT', label: 'Handler ILA', file: 'Handler-ILA' },
+    fla: { module: MODULES.fla, title: 'FLA - FINAL LOSS ASSESSMENT', label: 'FLA', file: 'FLA' },
+};
+const KIND_PATH = '/claims/:id/:kind(liability|fla)';
+
+/** Role check on the module of the requested kind. */
+const canKind = (action = 'view') => (req, res, next) => can(KINDS[req.params.kind].module, action)(req, res, next);
+
+function liabilityState(row, kind) {
+    const doc = liabilityDoc(row.id, kind);
     const computed = computeLiability(doc);
     return {
+        kind,
         status: doc.status ?? 'Draft',
         seeded: !!doc.seeded,
+        seededFrom: doc.seededFrom ?? null,
         submittedAt: doc.submittedAt ?? null,
         submittedBy: doc.submittedBy ?? null,
         reportGeneratedAt: doc.reportGeneratedAt ?? null,
@@ -44,10 +58,10 @@ function liabilityState(row) {
 }
 
 /** Saved copy of the liability (the seeded one is saved on the first change). */
-function editableLiability(row) {
-    const doc = liabilityDoc(row.id);
-    if (doc.status === 'Submitted') throw conflict('The liability report is submitted; it can no longer be changed.');
-    const { seeded: _s, updatedAt: _u, updatedBy: _b, ...rest } = doc;
+function editableLiability(row, kind) {
+    const doc = liabilityDoc(row.id, kind);
+    if (doc.status === 'Submitted') throw conflict(`The ${KINDS[kind].label} report is submitted; it can no longer be changed.`);
+    const { seeded: _s, seededFrom: _f, updatedAt: _u, updatedBy: _b, ...rest } = doc;
     return rest;
 }
 
@@ -83,35 +97,38 @@ function checkPart(p, partial = false) {
     return out;
 }
 
-router.get('/claims/:id/liability', can(MODULES.handlerIla), (req, res) => res.json(liabilityState(openClaim(req))));
+router.get(KIND_PATH, canKind(), (req, res) => res.json(liabilityState(openClaim(req), req.params.kind)));
 
-/** POST /api/v1/claims/:id/liability/parts { part, material, action, allowed, remarks?, partPrice? } -- "Add Part". */
-router.post('/claims/:id/liability/parts', can(MODULES.handlerIla, 'edit'), (req, res) => {
+/** POST /api/v1/claims/:id/(liability|fla)/parts { part, material, action, allowed, remarks?, partPrice? } -- "Add Part". */
+router.post(`${KIND_PATH}/parts`, canKind('edit'), (req, res) => {
+    const { kind } = req.params;
     const row = openClaim(req);
-    const doc = editableLiability(row);
+    const doc = editableLiability(row, kind);
     const part = { remarks: '', partPrice: 0, hsnCode: DEFAULT_HSN, ...checkPart(req.body ?? {}) };
     const n = (doc.parts ?? []).reduce((m, p) => Math.max(m, Number(String(p.id).split('-')[1]) || 0), 0) + 1;
     doc.parts = [...(doc.parts ?? []), { id: `LP-${n}`, ...part }];
-    putDoc(row.id, 'liability', { ...doc, status: 'Draft' }, actorOf(req));
-    audit(row.id, 'Liability part added', `${part.part} (${part.action})`, actorOf(req));
-    res.status(201).json(liabilityState(row));
+    putDoc(row.id, kind, { ...doc, status: 'Draft' }, actorOf(req));
+    audit(row.id, `${KINDS[kind].label} part added`, `${part.part} (${part.action})`, actorOf(req));
+    res.status(201).json(liabilityState(row, kind));
 });
 
-/** PATCH /api/v1/claims/:id/liability/parts/:partId -- edit a row (material, action, allowed, remarks, price). */
-router.patch('/claims/:id/liability/parts/:partId', can(MODULES.handlerIla, 'edit'), (req, res) => {
+/** PATCH /api/v1/claims/:id/(liability|fla)/parts/:partId -- edit a row (material, action, allowed, remarks, price). */
+router.patch(`${KIND_PATH}/parts/:partId`, canKind('edit'), (req, res) => {
+    const { kind } = req.params;
     const row = openClaim(req);
-    const doc = editableLiability(row);
+    const doc = editableLiability(row, kind);
     const idx = (doc.parts ?? []).findIndex((p) => p.id === req.params.partId);
     if (idx < 0) throw notFound('Part');
     doc.parts[idx] = { ...doc.parts[idx], ...checkPart(req.body ?? {}, true) };
-    putDoc(row.id, 'liability', { ...doc, status: 'Draft' }, actorOf(req));
-    res.json(liabilityState(row));
+    putDoc(row.id, kind, { ...doc, status: 'Draft' }, actorOf(req));
+    res.json(liabilityState(row, kind));
 });
 
-/** PUT /api/v1/claims/:id/liability/charges { towing?, voluntaryExcess?, salvage?, other?, compulsoryExcess? } */
-router.put('/claims/:id/liability/charges', can(MODULES.handlerIla, 'edit'), (req, res) => {
+/** PUT /api/v1/claims/:id/(liability|fla)/charges { towing?, voluntaryExcess?, salvage?, other?, compulsoryExcess? } */
+router.put(`${KIND_PATH}/charges`, canKind('edit'), (req, res) => {
+    const { kind } = req.params;
     const row = openClaim(req);
-    const doc = editableLiability(row);
+    const doc = editableLiability(row, kind);
     const charges = { ...(doc.charges ?? {}) };
     for (const k of ['towing', 'voluntaryExcess', 'salvage', 'other', 'compulsoryExcess']) {
         if (!(k in (req.body ?? {}))) continue;
@@ -119,19 +136,19 @@ router.put('/claims/:id/liability/charges', can(MODULES.handlerIla, 'edit'), (re
         if (!Number.isFinite(n) || n < 0) throw badRequest(`${k} must be a positive amount.`);
         charges[k] = Math.round(n);
     }
-    putDoc(row.id, 'liability', { ...doc, charges }, actorOf(req));
-    res.json(liabilityState(row));
+    putDoc(row.id, kind, { ...doc, charges }, actorOf(req));
+    res.json(liabilityState(row, kind));
 });
 
-function liabilityPdf(res, row) {
-    const s = liabilityState(row);
+function liabilityPdf(res, row, kind) {
+    const s = liabilityState(row, kind);
     const c = toClaim(row);
     const table = (t) => [
         { text: t.columns.join('  |  '), bold: true, size: 9, gap: 4 },
         ...t.rows.map((r) => ({ cols: [r.label, r.values.map((v) => inr(v)).join('   ')], size: 9, bold: !!r.bold })),
     ];
-    sendPdf(res, `Liability-${c.claimNo}.pdf`, [
-        { text: 'IBIMA ASSIST - INTELLIGENT LIABILITY ASSESSMENT', size: 14, bold: true, align: 'center' },
+    sendPdf(res, `${KINDS[kind].file}-${c.claimNo}.pdf`, [
+        { text: `IBIMA ASSIST - ${KINDS[kind].title}`, size: 14, bold: true, align: 'center' },
         { text: `${c.claimNo} · ${c.insuredName ?? ''} · ${c.vehicleNo ?? ''}`, size: 9, align: 'center', gap: 2 },
         { rule: true, gap: 8 },
         { text: 'Parts assessment', bold: true, size: 11 },
@@ -144,32 +161,37 @@ function liabilityPdf(res, row) {
     ]);
 }
 
-/** POST /api/v1/claims/:id/liability/report -- "Generate Report": the PDF. */
-router.post('/claims/:id/liability/report', can(MODULES.handlerIla), (req, res) => {
+/** POST /api/v1/claims/:id/(liability|fla)/report -- "Generate Report": the PDF. */
+router.post(`${KIND_PATH}/report`, canKind(), (req, res) => {
+    const { kind } = req.params;
     const row = openClaim(req);
-    const doc = liabilityDoc(row.id);
+    const doc = liabilityDoc(row.id, kind);
     if (!(doc.parts ?? []).length) throw badRequest('Add at least one part first.');
-    const { seeded: _s, updatedAt: _u, updatedBy: _b, ...rest } = doc;
-    putDoc(row.id, 'liability', { ...rest, reportGeneratedAt: nowIso() }, actorOf(req));
-    audit(row.id, 'Liability report generated', null, actorOf(req));
-    liabilityPdf(res, findClaimRow(row.id));
+    const { seeded: _s, seededFrom: _f, updatedAt: _u, updatedBy: _b, ...rest } = doc;
+    putDoc(row.id, kind, { ...rest, reportGeneratedAt: nowIso() }, actorOf(req));
+    audit(row.id, `${KINDS[kind].label} report generated`, null, actorOf(req));
+    liabilityPdf(res, findClaimRow(row.id), kind);
 });
 
-/** POST /api/v1/claims/:id/liability/submit -- "Submit Report": FLA done, net liability becomes the claim amount. */
-router.post('/claims/:id/liability/submit', can(MODULES.handlerIla, 'edit'), asyncHandler(async (req, res) => {
+/**
+ * POST /api/v1/claims/:id/(liability|fla)/submit -- "Submit Report". The net
+ * liability becomes the claim amount; the FLA submit also completes the FLA step.
+ */
+router.post(`${KIND_PATH}/submit`, canKind('edit'), asyncHandler(async (req, res) => {
+    const { kind } = req.params;
     const row = openClaim(req);
-    const doc = editableLiability(row);
+    const doc = editableLiability(row, kind);
     if (!(doc.parts ?? []).some((p) => p.allowed === 'Allowed')) throw badRequest('At least one part must be Allowed.');
     const { totals } = computeLiability(doc);
     const actor = actorOf(req);
     transaction(() => {
-        putDoc(row.id, 'liability', { ...doc, status: 'Submitted', submittedAt: nowIso(), submittedBy: actor.name, totals }, actor);
+        putDoc(row.id, kind, { ...doc, status: 'Submitted', submittedAt: nowIso(), submittedBy: actor.name, totals }, actor);
         setClaimFields(row.id, { amount: totals.netLiability });
-        completeStage(row.id, 'fla', actor);
-        audit(row.id, 'Liability report submitted', `Net liability ₹${inr(totals.netLiability)}`, actor);
+        if (kind === 'fla') completeStage(row.id, 'fla', actor);
+        audit(row.id, `${KINDS[kind].label} report submitted`, `Net liability ₹${inr(totals.netLiability)}`, actor);
     });
     await syncClaim(row.id);
-    res.json(liabilityState(findClaimRow(row.id)));
+    res.json(liabilityState(findClaimRow(row.id), kind));
 }));
 
 // ======================= Payment Recommendation =======================
@@ -189,15 +211,16 @@ async function approverInfo(row) {
 
 function financials(row) {
     const items = damageItems(row.id);
-    const liability = liabilityDoc(row.id);
-    const totals = computeLiability(liability).totals;
-    const flaDone = liability.status === 'Submitted';
+    const handler = computeLiability(liabilityDoc(row.id, 'liability')).totals;
+    const flaDoc = liabilityDoc(row.id, 'fla');
+    const fla = computeLiability(flaDoc).totals;
+    const flaDone = flaDoc.status === 'Submitted';
     return {
         aiIla: aiEstimate(items),
-        handlerIla: totals.netLiability,
-        approvedFla: flaDone ? totals.netLiability : null,
-        deductions: totals.deductions,
-        netPayable: flaDone ? totals.netLiability : 0,
+        handlerIla: handler.netLiability,
+        approvedFla: flaDone ? fla.netLiability : null,
+        deductions: flaDone ? fla.deductions : handler.deductions,
+        netPayable: flaDone ? fla.netLiability : 0,
         flaDone,
     };
 }
@@ -291,7 +314,7 @@ router.post('/claims/:id/payment/submit', can(MODULES.payment, 'edit'), asyncHan
     const saved = getDoc(row.id, 'payment');
     if (saved?.status && saved.status !== 'Draft') throw conflict('Already submitted for approval.');
     const f = financials(row);
-    if (!f.flaDone) throw badRequest('Submit the Handler ILA (liability) report first.');
+    if (!f.flaDone) throw badRequest('Submit the FLA report first.');
     const input = req.body?.payees ? cleanPayment(req.body) : { details: saved?.details ?? cleanPayment({}).details, payees: saved?.payees ?? defaultPayees(row, f) };
     if (!input.payees.length) throw badRequest('Add at least one payee.');
     input.payees.forEach((p, idx) => {

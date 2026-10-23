@@ -40,7 +40,7 @@ const cc = start('cc', root, {
     PORT: String(CC_PORT), DATABASE_FILE: join(dir, 'cc.db'), UPLOADS_DIR: join(dir, 'cc-uploads'), JWT_SECRET: 'cc-secret',
     ADMIN_SERVICE_URL: `http://127.0.0.1:${ADMIN_PORT}`, ADMIN_SERVICE_KEY: KEY, USER_CACHE_SECONDS: '0',
     NOTIFY_WEBHOOK_URL: `http://127.0.0.1:${MOCK_PORT}/notify`, AI_SERVICE_URL: `http://127.0.0.1:${MOCK_PORT}`,
-    SURVEY_LINK_BASE: 'https://survey.test/s', MAX_UPLOAD_MB: '1',
+    SURVEY_LINK_BASE: 'https://survey.test/s', MAX_UPLOAD_MB: '1', PUBLIC_URL: `http://127.0.0.1:${CC_PORT}`,
 });
 
 // Stand-in message gateway + AI service.
@@ -207,7 +207,11 @@ try {
     r = await AG2.post(`/claims/${claimId}/survey-link`, { recipients: ['Insured'], sendVia: [], mobile: '9876543210' });
     check('survey link needs a channel', r.status === 400);
     r = await AG2.post(`/claims/${claimId}/survey-link`, { recipients: ['Insured'], sendVia: ['SMS', 'Email'], mobile: '+91 98765 43210', email: 'amit.verma@test.in', autoReminder: true });
-    check('survey link sent on 2 channels', r.status === 200 && r.data.link.dispatch.status === 'Sent' && r.data.link.url.startsWith('https://survey.test/s?token='), r.data);
+    check('survey link sent on 2 channels (tracked public link)', r.status === 200 && r.data.link.dispatch.status === 'Sent' && r.data.link.url.startsWith(`http://127.0.0.1:${CC_PORT}/api/v1/s/`), r.data);
+    check('claim has an I-Bima Assist Unique ID', /^IBIMA-\d{4}-\d{6}$/.test(r.data.claim.link.uniqueId), r.data.claim.link);
+    check('unique ID cannot change once the link is sent', (await AG2.post(`/claims/${claimId}/unique-id`)).status === 409);
+    const opened = await fetch(r.data.link.url, { redirect: 'manual' });
+    check('survey link opens -> recorded + redirected to the survey page', opened.status === 302 && opened.headers.get('location').startsWith('https://survey.test/s?token='));
     check('gateway received both messages', sent.filter((m) => m.claimNo === claimNo).length === 2 && sent.some((m) => m.channel === 'Email' && m.to === 'amit.verma@test.in'));
 
     r = await AG2.post(`/claims/${claimId}/submit`, { intimation: intimation() });
@@ -252,12 +256,19 @@ try {
 
     // ---------- claim details ----------
     r = await H.get(`/claims/${claimId}/details`);
-    check('claim details prefilled from the intimation', r.data.values.vehicleRegNo === 'DL 01 AB 1234' && r.data.values.yearOfManufacture === '2021' && r.data.values.emailId === 'amit.verma@test.in', r.data);
+    check('claim details prefilled from the intimation', r.data.values.vehicleRegNo === 'DL 01 AB 1234' && r.data.values.yearOfManufacture === '2021' && r.data.values.rcOwnerName === 'Amit Verma', r.data);
     check('agent cannot open claim details -> 403', (await AG2.get(`/claims/${claimId}/details`)).status === 403);
-    r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values, odometer: '45000', bodyType: 'hatchback' } });
+    check('bad driver contact -> 400', (await H.put(`/claims/${claimId}/details`, { values: { driverContact: '123' } })).status === 400);
+    r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values, odometer: '45000', bodyType: 'hatchback', driverName: 'Amit Kumar', driverContact: '+91 98765 43210', partsDamage: ['Front Bumper', 'Bonnet'], primaryDriver: 'Yes' } });
+    check('driver / loss fields saved (tags list kept)', r.status === 200 && r.data.values.driverContact === '9876543210' && r.data.values.partsDamage.length === 2, r.data);
     check('Save Draft', r.status === 200 && r.data.values.odometer === '45000' && !r.data.claim.stages.find((s) => s.key === 'claim-details').done);
     r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values }, complete: true });
     check('Next completes Claim Details', r.data.claim.stage === 'ai-ila', r.data.claim?.stage);
+    r = await H.get(`/claims/${claimId}/info`);
+    check('Claim Information prefilled (claim, survey, vehicle, insured)', r.data.values.claimNumber === claimNo && r.data.values.finalSurveyorName === 'Suresh Sharma' && r.data.values.registrationNumber === 'DL 01 AB 1234' && r.data.values.driverName === 'Amit Kumar', r.data.values);
+    r = await H.put(`/claims/${claimId}/info`, { values: { ...r.data.values, ncbStatus: '20%', investigationRequired: 'No' } });
+    check('Claim Information saved', r.status === 200 && r.data.values.ncbStatus === '20%');
+    check('agent cannot open Claim Information -> 403', (await AG2.get(`/claims/${claimId}/info`)).status === 403);
 
     // ---------- documents ----------
     r = await H.get(`/claims/${claimId}/documents`);
@@ -285,6 +296,10 @@ try {
     check('vehicle photos keep every file', r.data.files.filter((x) => x.type === 'vehicle-photos').length === 3);
     r = await H.post(`/claims/${claimId}/documents/process`);
     check('Upload & Process ok when complete', r.status === 200 && r.data.pending.length === 0, r.data);
+    let dl = await H.raw('GET', `/claims/${claimId}/documents/download.zip`);
+    check('Download As Zip File', dl.status === 200 && dl.buf.readUInt32LE(0) === 0x04034b50 && dl.headers.get('content-type') === 'application/zip');
+    dl = await H.raw('GET', `/claims/${claimId}/documents/download.pdf`);
+    check('Download As PDF (register + photos)', dl.status === 200 && dl.buf.subarray(0, 5).toString() === '%PDF-' && dl.buf.includes(Buffer.from('/Subtype /Image')));
     check('agent can upload on intimation (Claim Intimation create)', (await AG2.upload(`/claims/${claimId}/documents/fir`, PDF, 'application/pdf', 'FIR.pdf')).status === 201);
 
     // ---------- AI ILA ----------
@@ -331,14 +346,27 @@ try {
     check('compulsory excess deducted', r.data.charges.compulsoryExcess === -1000);
     raw = await H.raw('POST', `/claims/${claimId}/liability/report`);
     check('Generate Report -> PDF', raw.status === 200 && raw.buf.subarray(0, 5).toString() === '%PDF-');
+    check('payment needs the FLA first', (await H.post(`/claims/${claimId}/payment/submit`)).status === 400);
     r = await H.post(`/claims/${claimId}/liability/submit`);
-    check('Submit Report -> stage payment, claim amount = net liability', r.status === 200 && r.data.status === 'Submitted', r.data);
+    check('Handler ILA submitted (FLA step still open)', r.status === 200 && r.data.status === 'Submitted' && (await H.get(`/claims/${claimId}`)).data.stage === 'fla', r.data);
+    const handlerNet = r.data.totals.netLiability;
+    check('submitted Handler ILA is locked', (await H.post(`/claims/${claimId}/liability/parts`, { part: 'X part', material: 'Metal', action: 'Repair', allowed: 'Allowed' })).status === 409);
+
+    // ---------- FLA ----------
+    r = await H.get(`/claims/${claimId}/fla`);
+    check('FLA seeded from the Handler ILA', r.status === 200 && r.data.seeded && r.data.seededFrom === 'Handler ILA' && r.data.parts.length === glass + 1 && r.data.totals.netLiability === handlerNet, r.data?.seededFrom);
+    r = await H.patch(`/claims/${claimId}/fla/parts/${r.data.parts[0].id}`, { partPrice: r.data.parts[0].partPrice + 1000 });
+    check('FLA edits do not touch the Handler ILA', r.data.totals.netLiability > handlerNet && (await H.get(`/claims/${claimId}/liability`)).data.totals.netLiability === handlerNet);
+    raw = await H.raw('POST', `/claims/${claimId}/fla/report`);
+    check('FLA report PDF', raw.status === 200 && raw.headers.get('content-disposition').includes('FLA-'));
+    r = await H.post(`/claims/${claimId}/fla/submit`);
+    check('FLA submit -> stage payment', r.status === 200 && (await H.get(`/claims/${claimId}`)).data.stage === 'payment-recommendation');
     const net = r.data.totals.netLiability;
-    check('submitted liability is locked', (await H.post(`/claims/${claimId}/liability/parts`, { part: 'X part', material: 'Metal', action: 'Repair', allowed: 'Allowed' })).status === 409);
 
     // ---------- payment recommendation ----------
     r = await H.get(`/claims/${claimId}/payment`);
-    check('payment: net payable from liability, workshop payee prefilled, approver from Admin users', r.data.summary.netPayable === net && r.data.payees[0]?.payeeName === 'ABC Motors' && r.data.approval.approverName.startsWith('Vikram Singh'), r.data);
+    check('payment: Handler ILA + approved FLA amounts, net payable = FLA', r.data.summary.handlerIla === handlerNet && r.data.summary.approvedFla === net, r.data.summary);
+    check('payment: net payable from FLA, workshop payee prefilled, approver from Admin users', r.data.summary.netPayable === net && r.data.payees[0]?.payeeName === 'ABC Motors' && r.data.approval.approverName.startsWith('Vikram Singh'), r.data);
     check('submit without bank details -> 400', (await H.post(`/claims/${claimId}/payment/submit`)).status === 400);
     const payee = { ...r.data.payees[0], bankName: 'HDFC Bank Ltd.', bankBranch: 'Noida', ifsc: 'hdfc0001234', accountNo: '123456789012345' };
     check('bad IFSC -> 400', (await H.put(`/claims/${claimId}/payment`, { details: r.data.details, payees: [{ ...payee, ifsc: 'XX' }] })).status === 400);
@@ -377,6 +405,8 @@ try {
     const letterNo = r.data.letter.id;
     raw = await H.raw('GET', `/claims/${claimId}/letters/${letterNo}/pdf`);
     check('letter PDF', raw.status === 200);
+    r = await H.post(`/claims/${claimId}/letters`, { ...letter, channel: undefined, channels: ['sms', 'email', 'whatsapp'] });
+    check('one letter on SMS + Email + WhatsApp', r.status === 201 && r.data.delivery.deliveries.length === 3 && r.data.letter.channel === 'SMS, Email, WhatsApp', r.data);
     gatewayFails = true;
     r = await H.post(`/claims/${claimId}/letters`, { ...letter, channel: 'sms' });
     check('gateway down -> letter logged as Failed', r.status === 201 && r.data.delivery.status === 'Failed', r.data);
@@ -395,6 +425,12 @@ try {
     check('Send SMS', r.data.rows[0].type === 'SMS Sent' && r.data.rows[0].status === 'Delivered');
     check('Send Email needs a valid address', (await H.post(`/claims/${claimId}/communications`, { kind: 'email', to: 'nope', message: 'x' })).status === 400);
     raw = await H.raw('GET', `/claims/${claimId}/communications/export.csv`);
+    r = await H.get('/dashboard/analytics?days=7');
+    check('analytics: trend, status, sources', r.status === 200 && r.data.trend.length === 7 && r.data.trend.at(-1).count === 1 && r.data.status.find((x) => x.key === 'allocated').value === 1 && r.data.sources.find((x) => x.key === 'Call Center').value === 1, r.data);
+    check('analytics: survey link summary counts the opened link', r.data.linkSummary.rows[0]?.sent === 1 && r.data.linkSummary.rows[0].accessed === 1 && r.data.linkSummary.rows[0].completed === 1 && r.data.linkSummary.rows[0].accessRate === 100, r.data.linkSummary);
+    r = await H.get('/dashboard?location=Noida&insurer=Demo%20Insurance%20Co');
+    check('quick filters: location + insurer', r.data.intimations.total >= 1 && r.data.filterOptions.locations.includes('Noida'), r.data.filterOptions);
+    check('quick filters: other insurer -> nothing', (await H.get('/dashboard?insurer=Nobody')).data.intimations.rows.filter((x) => x.status !== 'Draft').length === 0);
     check('Export History CSV', raw.status === 200 && raw.buf.toString().startsWith('Date & Time'));
     check('agent sees communication history', (await AG2.get(`/claims/${claimId}/communications`)).status === 200);
 

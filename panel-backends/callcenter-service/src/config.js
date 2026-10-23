@@ -32,6 +32,9 @@ export const settings = {
 
     // Survey link sent from the Intimation screen (?token= is appended).
     surveyLinkBase: process.env.SURVEY_LINK_BASE || 'https://survey.ibimaassist.online/s',
+    // Public address of this portal. When set, survey links go through
+    // PUBLIC_URL/api/v1/s/<token> so the dashboard can count opened links.
+    publicUrl: (process.env.PUBLIC_URL || '').replace(/\/$/, ''),
     // SMS / Email / WhatsApp go out through this webhook (POST JSON). Empty =
     // nothing is delivered: messages are logged with status Pending.
     notifyWebhookUrl: process.env.NOTIFY_WEBHOOK_URL || '',
