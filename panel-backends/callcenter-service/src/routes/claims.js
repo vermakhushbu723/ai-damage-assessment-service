@@ -233,7 +233,7 @@ router.get('/dashboard/analytics', can(MODULES.dashboard), (req, res) => {
 
 // ---------- claims ----------
 
-/** GET /api/v1/claims?search=&stage=&status=&page=&pageSize= */
+/** GET /api/v1/claims?search=&stage=&status=&mine=1&page=&pageSize= -- All Claims, New/Assigned, claim pickers. */
 router.get('/claims', (req, res) => {
     const where = ["(status <> 'Draft' OR created_by = ?)"];
     const params = [req.user.id];
@@ -249,6 +249,11 @@ router.get('/claims', (req, res) => {
     if (['Draft', 'Open', 'Closed'].includes(req.query.status)) {
         where.push('status = ?');
         params.push(req.query.status);
+    }
+    // New/Assigned: claims allocated to me, plus intimations of the last 24 hours.
+    if (req.query.mine === '1') {
+        where.push('(handler_id = ? OR (submitted_at >= ? AND status = ?))');
+        params.push(req.user.id, new Date(Date.now() - 86400_000).toISOString(), 'Open');
     }
     const rows = db.prepare(`SELECT * FROM claims WHERE ${where.join(' AND ')} ORDER BY COALESCE(submitted_at, created_at) DESC`).all(...params);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
