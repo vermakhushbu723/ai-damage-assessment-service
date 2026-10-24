@@ -3,7 +3,7 @@ import { db, nowIso, transaction } from '../db/database.js';
 import { settings } from '../config.js';
 import { badRequest, notFound, HttpError } from '../utils/http.js';
 import { authenticate, can, actorOf } from '../middleware/authenticate.js';
-import { MODULES, DOC_TYPES, REQUIRED_DOC_TYPES, UPLOAD_MIME } from '../constants.js';
+import { MODULES, DOC_TYPES, REQUIRED_DOC_TYPES, UPLOAD_MIME, VIDEO_MIME } from '../constants.js';
 import { audit } from '../models/claimModel.js';
 import { saveFile, readFile, signedFileUrl, verifyFileSignature } from '../services/fileStore.js';
 import { nextSequentialId, sha256 } from '../utils/ids.js';
@@ -17,7 +17,7 @@ import { fmtDateTime } from '../utils/format.js';
 // one is marked replaced. Photos / other documents keep every file.
 
 /** Types where every upload adds a file instead of replacing the last one. */
-const MULTI = ['vehicle-photos', 'other', 'kyc', 'aadhar', 'surveyor-report'];
+const MULTI = ['vehicle-photos', 'other', 'kyc', 'aadhar', 'surveyor-report', 'survey-video'];
 
 export const toDocument = (d) => ({
     id: d.id,
@@ -50,6 +50,40 @@ export function documentsState(claimId) {
         };
     });
     return { types, files, pending: types.filter((t) => t.status === 'pending').map((t) => t.label) };
+}
+
+/** The file name sent in X-File-Name (URI-encoded). */
+export function uploadName(req) {
+    try {
+        return decodeURIComponent(String(req.headers['x-file-name'] || 'document'));
+    } catch {
+        return 'document';
+    }
+}
+
+/**
+ * Saves one uploaded file as a DMS document of `type` and returns it.
+ * Single-paper types replace the previous file; with `sameNameOnly` (survey
+ * link: DL front + back are two files) only the uploader's file of the same
+ * name is replaced, so a re-take swaps the old picture.
+ */
+export function storeDocument(claimId, type, { buf, mime, name }, actor, { sameNameOnly = false } = {}) {
+    const fileName = String(name || 'document').replace(/[\\/]/g, '_').slice(0, 120) || 'document';
+    const storedName = saveFile(claimId, buf, UPLOAD_MIME[mime] ?? VIDEO_MIME[mime]);
+    const id = nextSequentialId('documents', 'DOC');
+    transaction(() => {
+        if (sameNameOnly) {
+            db.prepare('UPDATE documents SET replaced_at = ? WHERE claim_id = ? AND doc_type = ? AND file_name = ? AND uploaded_by = ? AND replaced_at IS NULL')
+                .run(nowIso(), claimId, type, fileName, actor.id);
+        } else if (!MULTI.includes(type)) {
+            db.prepare('UPDATE documents SET replaced_at = ? WHERE claim_id = ? AND doc_type = ? AND replaced_at IS NULL').run(nowIso(), claimId, type);
+        }
+        db.prepare(`INSERT INTO documents (id, claim_id, doc_type, file_name, mime, size, sha256, stored_name, uploaded_by, uploaded_by_name, uploaded_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+            .run(id, claimId, type, fileName, mime, buf.length, sha256(buf), storedName, actor.id, actor.name, nowIso());
+        audit(claimId, 'Document uploaded', `${DOC_TYPES[type]} · ${fileName}`, actor);
+    });
+    return toDocument(db.prepare('SELECT * FROM documents WHERE id = ?').get(id));
 }
 
 // Signed file links -- public (no Bearer header possible on <img>/<iframe>).
@@ -95,27 +129,8 @@ router.put(
         if (type === 'vehicle-photos' && mime === 'application/pdf') throw badRequest('Vehicle photos must be images.');
         const buf = req.body;
         if (!Buffer.isBuffer(buf) || !buf.length) throw badRequest('The file is empty.');
-        let name = 'document';
-        try {
-            name = decodeURIComponent(String(req.headers['x-file-name'] || 'document'));
-        } catch {
-            /* keep default */
-        }
-        name = name.replace(/[\\/]/g, '_').slice(0, 120) || 'document';
-
-        const actor = actorOf(req);
-        const storedName = saveFile(row.id, buf, ext);
-        const id = nextSequentialId('documents', 'DOC');
-        transaction(() => {
-            if (!MULTI.includes(type)) {
-                db.prepare('UPDATE documents SET replaced_at = ? WHERE claim_id = ? AND doc_type = ? AND replaced_at IS NULL').run(nowIso(), row.id, type);
-            }
-            db.prepare(`INSERT INTO documents (id, claim_id, doc_type, file_name, mime, size, sha256, stored_name, uploaded_by, uploaded_by_name, uploaded_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-                .run(id, row.id, type, name, mime, buf.length, sha256(buf), storedName, actor.id, actor.name, nowIso());
-            audit(row.id, 'Document uploaded', `${DOC_TYPES[type]} · ${name}`, actor);
-        });
-        res.status(201).json({ document: toDocument(db.prepare('SELECT * FROM documents WHERE id = ?').get(id)), ...documentsState(row.id) });
+        const document = storeDocument(row.id, type, { buf, mime, name: uploadName(req) }, actorOf(req));
+        res.status(201).json({ document, ...documentsState(row.id) });
     },
 );
 

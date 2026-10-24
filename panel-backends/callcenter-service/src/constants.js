@@ -103,6 +103,7 @@ export const DOC_TYPES = {
     kyc: 'KYC Documents',
     aadhar: 'Aadhar Documents',
     'surveyor-report': 'Surveyor Report',
+    'survey-video': 'Walk Around Video',
     other: 'Other Documents',
 };
 /** "Pending" on the Documents DMS screen until uploaded. */
@@ -110,6 +111,8 @@ export const REQUIRED_DOC_TYPES = ['dl', 'rc', 'estimate', 'policy-copy', 'claim
 export const UPLOAD_MIME = {
     'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'application/pdf': '.pdf',
 };
+/** The survey link's walk-around video (document type survey-video only). */
+export const VIDEO_MIME = { 'video/webm': '.webm', 'video/mp4': '.mp4', 'video/quicktime': '.mov' };
 
 // ---- AI ILA ----
 export const DAMAGE_TYPES = ['Crack', 'Broken Part', 'Dent', 'Scratch', 'Paint Damage'];

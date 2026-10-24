@@ -9,6 +9,7 @@ import ilaRouter from './routes/ila.js';
 import settlementRouter from './routes/settlement.js';
 import communicationRouter from './routes/communication.js';
 import publicRouter from './routes/public.js';
+import surveyRouter from './routes/survey.js';
 import { pendingCount } from './services/sync.js';
 import { aiConfigured } from './services/aiClient.js';
 import { gatewayConfigured } from './services/notifier.js';
@@ -18,7 +19,10 @@ export const app = express();
 // Behind nginx: trust X-Forwarded-* from the local proxy only.
 app.set('trust proxy', 'loopback');
 app.disable('x-powered-by');
-app.use(cors({ origin: settings.corsOrigins, credentials: true }));
+// The customer survey page lives on another site (ibimaassist.online), so the
+// token-protected /survey API is open to any origin (no cookies involved).
+app.use('/api/v1/survey', cors({ origin: true, maxAge: 600 }));
+app.use(/^\/api\/v1\/(?!survey\/)/, cors({ origin: settings.corsOrigins, credentials: true }));
 app.use(express.json({ limit: '200kb' }));
 
 const api = express.Router();
@@ -35,6 +39,7 @@ api.get('/health', (_req, res) => res.json({
 api.use('/auth', authRouter);
 api.use(filesRouter); // /files/:docId (signed links)
 api.use(publicRouter); // /s/:token (survey link, counts opens)
+api.use(surveyRouter); // /survey/:token (customer survey page: details, uploads, submit)
 
 // Signed in (each router checks the token + role permissions itself)
 api.use(claimsRouter); // /dashboard, /claims, intimation, survey link, remarks, audit, details

@@ -164,7 +164,9 @@ export function toClaim(row) {
     return {
         ...toListItem(row),
         intimation: i,
-        link: parseJson(row.link, {}),
+        // The Assist Claim ID (row.id) is the only I-Bima Assist ID; drop the
+        // separate IBIMA-YYYY-NNNNNN number older drafts were given.
+        link: (({ uniqueId, ...l }) => l)(parseJson(row.link, {})), // eslint-disable-line no-unused-vars
         createdBy: row.created_by_name,
         productType: i.product ?? null,
         policyType: i.policyType ?? null,

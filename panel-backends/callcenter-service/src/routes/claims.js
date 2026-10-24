@@ -142,29 +142,6 @@ function filterOptions() {
     };
 }
 
-/** I-Bima Assist Unique ID: IBIMA-YYYY-NNNNNN, one running number per year. */
-function nextUniqueId() {
-    const year = new Date().getFullYear();
-    const row = db.prepare("SELECT MAX(CAST(substr(json_extract(link, '$.uniqueId'), 12) AS INTEGER)) AS n FROM claims WHERE json_extract(link, '$.uniqueId') LIKE ?")
-        .get(`IBIMA-${year}-%`);
-    return `IBIMA-${year}-${String((row.n ?? 0) + 1).padStart(6, '0')}`;
-}
-
-/**
- * POST /api/v1/claims/:id/unique-id -- the refresh icon next to "I-Bima Assist
- * Unique ID": issues one if the claim has none, or a new one while the survey
- * link has not been sent yet.
- */
-router.post('/claims/:id/unique-id', can(MODULES.intimation, 'edit'), (req, res) => {
-    const row = loadClaim(req);
-    const link = parseJson(row.link, {});
-    if (link.uniqueId && link.sentAt) throw conflict('The survey link with this ID is already sent; the ID cannot change.');
-    link.uniqueId = nextUniqueId();
-    setClaimFields(row.id, { link: JSON.stringify(link) });
-    audit(row.id, 'Unique ID issued', link.uniqueId, actorOf(req));
-    res.json({ uniqueId: link.uniqueId, claim: toClaim(findClaimRow(row.id)) });
-});
-
 const DAY = 86400_000;
 const istDay = (iso) => new Date(new Date(iso).getTime() + 330 * 60_000).toISOString().slice(0, 10);
 
@@ -322,7 +299,7 @@ router.post('/claims', can(MODULES.intimation, 'create'), (req, res) => {
     const actor = actorOf(req);
     const id = transaction(() => {
         const newId = insertClaim(intimation, actor);
-        setClaimFields(newId, { link: JSON.stringify({ ...cleanLinkSettings(req.body?.link ?? {}), uniqueId: nextUniqueId() }) });
+        setClaimFields(newId, { link: JSON.stringify(cleanLinkSettings(req.body?.link ?? {})) });
         audit(newId, 'Draft saved', 'Intimation saved as draft', actor);
         return newId;
     });

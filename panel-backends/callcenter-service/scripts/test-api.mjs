@@ -208,8 +208,9 @@ try {
     check('survey link needs a channel', r.status === 400);
     r = await AG2.post(`/claims/${claimId}/survey-link`, { recipients: ['Insured'], sendVia: ['SMS', 'Email'], mobile: '+91 98765 43210', email: 'amit.verma@test.in', autoReminder: true });
     check('survey link sent on 2 channels (tracked public link)', r.status === 200 && r.data.link.dispatch.status === 'Sent' && r.data.link.url.startsWith(`http://127.0.0.1:${CC_PORT}/api/v1/s/`), r.data);
-    check('claim has an I-Bima Assist Unique ID', /^IBIMA-\d{4}-\d{6}$/.test(r.data.claim.link.uniqueId), r.data.claim.link);
-    check('unique ID cannot change once the link is sent', (await AG2.post(`/claims/${claimId}/unique-id`)).status === 409);
+    check('one I-Bima Assist ID per claim (no second IBIMA- number)', r.data.claim.id === claimId && !('uniqueId' in r.data.claim.link), r.data.claim.link);
+    check('old unique-id endpoint is gone', (await AG2.post(`/claims/${claimId}/unique-id`)).status === 404);
+    const closedToken = r.data.link.token;
     const opened = await fetch(r.data.link.url, { redirect: 'manual' });
     check('survey link opens -> recorded + redirected to the survey page', opened.status === 302 && opened.headers.get('location').startsWith('https://survey.test/s?token='));
     check('gateway received both messages', sent.filter((m) => m.claimNo === claimNo).length === 2 && sent.some((m) => m.channel === 'Email' && m.to === 'amit.verma@test.in'));
@@ -433,6 +434,47 @@ try {
     check('quick filters: other insurer -> nothing', (await H.get('/dashboard?insurer=Nobody')).data.intimations.rows.filter((x) => x.status !== 'Draft').length === 0);
     check('Export History CSV', raw.status === 200 && raw.buf.toString().startsWith('Date & Time'));
     check('agent sees communication history', (await AG2.get(`/claims/${claimId}/communications`)).status === 200);
+
+    // ---------- customer survey web link ----------
+    {
+        // a fresh claim (the main one is closed by now) -- the link works from the draft on
+        const S = api(CC);
+        const draft = (await AG2.post('/claims', { intimation: intimation() })).data;
+        r = await AG2.post(`/claims/${draft.id}/survey-link`, { recipients: ['Insured'], sendVia: ['SMS'], mobile: '9876543210' });
+        const claimId = draft.id;
+        const t = encodeURIComponent(r.data.link.token);
+        check('survey on a closed claim -> 409', (await S.upload(`/survey/${encodeURIComponent(closedToken)}/files/vehicle-photos`, PNG, 'image/png', 'x.png')).status === 409);
+        check('survey page: bad token -> 404', (await S.get('/survey/not-a-real-token-123')).status === 404);
+        r = await S.get(`/survey/${t}`);
+        check('survey page shows the intimation details', r.status === 200 && r.data.claimNo === draft.claimNo && r.data.assistClaimId === claimId
+            && r.data.vehicle.registrationNumber === 'DL 01 AB 1234' && r.data.insured.name && r.data.insurer.name, r.data);
+        const pre = await fetch(`${CC}/survey/${t}/files/vehicle-photos`, { method: 'OPTIONS', headers: { Origin: 'https://ibimaassist.online', 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'content-type,x-file-name' } });
+        check('survey API allows the web-app origin (CORS preflight)', pre.status === 204 && pre.headers.get('access-control-allow-origin') === 'https://ibimaassist.online');
+        check('survey submit needs uploads first', (await S.post(`/survey/${t}/submit`, {})).status === 400);
+        check('survey upload: wrong type -> 400', (await S.upload(`/survey/${t}/files/rc`, Buffer.from('x'), 'text/plain', 'a.txt')).status === 400);
+        check('survey upload: unknown doc type -> 400', (await S.upload(`/survey/${t}/files/nope`, PNG, 'image/png', 'a.png')).status === 400);
+        r = await S.upload(`/survey/${t}/files/vehicle-photos`, PNG, 'image/png', 'survey-front.png');
+        check('survey photo upload', r.status === 201 && r.data.document.type === 'vehicle-photos', r.data);
+        check('survey document upload (DL front)', (await S.upload(`/survey/${t}/files/dl`, PDF, 'application/pdf', 'survey-dl-front.pdf')).status === 201);
+        await S.upload(`/survey/${t}/files/dl`, PNG, 'image/png', 'survey-dl-back.png');
+        await S.upload(`/survey/${t}/files/dl`, PNG2, 'image/png', 'survey-dl-back.png'); // re-take replaces the back only
+        check('walk-around video upload', (await S.upload(`/survey/${t}/files/survey-video`, Buffer.from('webm-bytes'), 'video/webm', 'walk-around.webm')).status === 201);
+        check('video only as survey-video', (await S.upload(`/survey/${t}/files/vehicle-photos`, Buffer.from('v'), 'video/webm', 'v.webm')).status === 400);
+        r = await S.post(`/survey/${t}/submit`, { owner: { ownerName: 'Amit Verma', odometer: '12000' }, recommendation: 'approved' });
+        check('survey submitted', r.status === 200 && r.data.fileCount === 4, r.data);
+        check('second submit -> 409', (await S.post(`/survey/${t}/submit`, {})).status === 409);
+        check('no uploads after submit', (await S.upload(`/survey/${t}/files/vehicle-photos`, PNG, 'image/png', 'late.png')).status === 409);
+        r = await AG2.get(`/claims/${claimId}/documents`);
+        const fromSurvey = (r.data?.files ?? []).filter((f) => f.uploadedBy === 'Customer (Survey Link)');
+        check('survey files are in the Documents DMS (DL front + back kept, re-take replaced)', fromSurvey.length === 4 && fromSurvey.filter((f) => f.type === 'dl').length === 2 && fromSurvey.some((f) => f.name === 'walk-around.webm' && f.typeLabel === 'Walk Around Video'), fromSurvey);
+        const vid = fromSurvey.find((f) => f.type === 'survey-video');
+        const vf = vid ? await fetch(`${CC}${vid.url}`) : null;
+        check('walk-around video opens from the DMS', vf?.status === 200 && vf.headers.get('content-type') === 'video/webm');
+        r = await AG2.get(`/claims/${claimId}/communications`);
+        check('"Survey Submitted" in Communication History', JSON.stringify(r.data).includes('Survey Submitted'), r.data);
+        r = await AG2.get(`/claims/${claimId}`);
+        check('claim link shows the survey submission', !!r.data.link.survey?.submittedAt && r.data.link.survey.owner.ownerName === 'Amit Verma', r.data.link);
+    }
 
     // ---------- remarks + audit trail ----------
     r = await H.post(`/claims/${claimId}/remarks`, { text: 'Spoke to workshop.' });
