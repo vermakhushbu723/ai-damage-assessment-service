@@ -6,6 +6,7 @@ import { DOC_TYPES, UPLOAD_MIME, VIDEO_MIME } from '../constants.js';
 import { setClaimFields, audit, addEvent } from '../models/claimModel.js';
 import { insertCommunication } from '../models/communicationModel.js';
 import { storeDocument, uploadName } from './documents.js';
+import { fmtDate, fmtDateTime } from '../utils/format.js';
 
 // The customer's survey web link (ibimaassist.online/claim-weblink/...).
 // No sign-in: the link token is the key. The page reads the intimation
@@ -32,6 +33,11 @@ function assertOpen(row) {
 }
 
 const join = (...parts) => parts.filter(Boolean).join(', ') || null;
+// The intimation form stores dates as ISO timestamps; the survey page shows them.
+const isIso = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v);
+const day = (v) => (isIso(v) ? fmtDate(v) : v ?? null);
+const time = (v) => (isIso(v) ? fmtDateTime(v).split(', ')[1] : v ?? null);
+const year = (v) => (isIso(v) ? fmtDate(v).slice(-4) : v ?? null);
 
 /** GET /api/v1/survey/:token -- the intimation details the survey page shows. */
 router.get('/survey/:token', (req, res) => {
@@ -48,7 +54,7 @@ router.get('/survey/:token', (req, res) => {
         insured: { name: i.insuredName ?? null, mobile: i.insuredContact ?? null, email: i.insuredEmail ?? null, address: i.insuredAddress ?? null },
         vehicle: {
             registrationNumber: i.registrationNumber ?? row.vehicle_no ?? null,
-            registrationDate: i.registrationDate ?? null,
+            registrationDate: day(i.registrationDate),
             make: i.make ?? null,
             model: i.model ?? null,
             variant: i.variant ?? null,
@@ -56,12 +62,12 @@ router.get('/survey/:token', (req, res) => {
             engineNo: i.engineNo ?? null,
             chassisNumber: i.chassisNumber ?? null,
             colour: i.colour ?? null,
-            manufacturingYear: i.manufacturingYear ?? null,
+            manufacturingYear: year(i.manufacturingYear),
             state: i.incidentState ?? null,
         },
         incident: {
-            date: i.dateOfIncident ?? null,
-            time: i.timeOfIncident ?? null,
+            date: day(i.dateOfIncident),
+            time: time(i.timeOfIncident),
             place: join(i.incidentArea, i.incidentLandmark, i.incidentCity, i.incidentState, i.incidentPincode),
             natureOfLoss: i.natureOfLoss ?? null,
             description: i.briefDescription ?? null,
