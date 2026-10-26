@@ -482,6 +482,32 @@ try {
     r = await H.get(`/claims/${claimId}/audit`);
     check('Claim Audit Trail records the journey', r.data.length > 20 && r.data.some((e) => e.action === 'Intimation submitted') && r.data.some((e) => e.action === 'Payment recommended'), r.data.length);
 
+    // ---------- one user, several roles (Admin > Create Users, multi-select) ----------
+    {
+        r = await A.post('/users', user({ roleKey: 'call-center', roleKeys: ['call-center', 'state-manager', 'internal-surveyor'], name: 'Multi Role', userId: 'multi.role', email: 'multi@test.in', employeeId: 'MR01', contact: '9811000099', extra: { agentCode: 'CC-1099' } }));
+        check('admin creates a user with 3 roles', r.status === 201 && r.data.roleKey === 'call-center' && r.data.roleKeys.length === 3, r.data);
+        const multiId = r.data.id;
+        check('bad role in roleKeys -> 400', (await A.patch(`/users/${multiId}`, { roleKeys: ['call-center', 'no-such-role'] })).status === 400);
+        check('Roles & Permissions counts the additional role', ((await A.get('/roles')).data ?? []).find((x) => x.key === 'state-manager')?.users === 2);
+        r = await pub.post('/auth/login', { identifier: 'multi.role', password: 'Temp@1234' });
+        check('multi-role user signs in with the primary role', r.status === 200 && r.data.user.roleKey === 'call-center', r.data);
+        check('portal roles = the web roles only (mobile surveyor role left out)', JSON.stringify(r.data.user.roles?.map((x) => x.roleKey)) === '["call-center","state-manager"]', r.data.user.roles);
+        const MR = api(CC, r.data.token);
+        check('as Call Center: Handler Allocation -> 403', (await MR.get('/handlers')).status === 403);
+        check('cannot switch to a role not held -> 400', (await MR.post('/auth/switch-role', { roleKey: 'claim-handler' })).status === 400);
+        check('cannot switch to a mobile-only role -> 400', (await MR.post('/auth/switch-role', { roleKey: 'internal-surveyor' })).status === 400);
+        r = await MR.post('/auth/switch-role', { roleKey: 'state-manager' });
+        check('switch role -> new session in that role', r.status === 200 && r.data.user.roleKey === 'state-manager' && r.data.user.permissions['Handler Allocation'].view === true, r.data);
+        const SM = api(CC, r.data.token);
+        check('as State Manager: Handler Allocation opens', (await SM.get('/handlers')).status === 200);
+        check('auth/me follows the picked role', (await SM.get('/auth/me')).data?.user?.roleName === 'State Manager');
+        check('the old token keeps its own role', (await MR.get('/auth/me')).data?.user?.roleKey === 'call-center');
+        r = await A.patch(`/users/${multiId}`, { roleKey: 'call-center', roleKeys: ['call-center'] });
+        check('admin removes the extra roles', r.status === 200 && r.data.roleKeys.length === 1, r.data);
+        await new Promise((res) => setTimeout(res, 1200)); // user cache
+        check('removed role falls back to the default role', (await SM.get('/handlers')).status === 403 && (await SM.get('/auth/me')).data?.user?.roleKey === 'call-center');
+    }
+
     // ---------- account changes in the Admin portal apply at once ----------
     r = await A.post('/users/bulk-status', { ids: [h1.id], status: 'Suspended' });
     check('admin suspends a handler', r.status === 200);

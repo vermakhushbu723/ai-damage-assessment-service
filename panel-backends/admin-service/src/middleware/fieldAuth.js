@@ -24,7 +24,7 @@ export function fieldAuth(req, res, next) {
     }
     if (claims.kind !== 'field') return res.status(401).json({ detail: 'Invalid session, please sign in again.' });
     const user = findUser(claims.sub);
-    if (!user || user.status !== 'Active' || !FIELD_ROLES[claims.role]?.includes(user.roleKey)) {
+    if (!user || user.status !== 'Active' || !user.roleKeys.some((k) => FIELD_ROLES[claims.role]?.includes(k))) {
         return res.status(401).json({ detail: 'This account can no longer use the app. Contact your admin.' });
     }
     req.fieldUser = { ...user, appRole: claims.role };

@@ -86,7 +86,7 @@ router.post('/auth/login', asyncHandler(async (req, res) => {
     }
     const user = findUser(row.id);
     if (user.status !== 'Active') fail(`This account is ${user.status}. Contact your admin.`, 403);
-    if (!FIELD_ROLES[appRole].includes(user.roleKey)) {
+    if (!user.roleKeys.some((k) => FIELD_ROLES[appRole].includes(k))) {
         fail(appRole === 'agent' ? 'This account is not a pre-inspection agent. Use the Surveyor tab or contact your admin.' : 'This account is not a surveyor. Use the Agent tab or contact your admin.', 403);
     }
     if (user.platform === 'web') fail('This account has web access only. Ask your admin to enable mobile access.', 403);

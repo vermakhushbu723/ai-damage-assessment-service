@@ -35,7 +35,7 @@ router.get('/preinspections/:id', authenticate, (req, res) => {
 function fieldAgent(agentId) {
     const user = agentId && findUser(agentId);
     if (!user) throw badRequest('Select the agent or surveyor.');
-    const appRole = Object.keys(FIELD_ROLES).find((r) => FIELD_ROLES[r].includes(user.roleKey));
+    const appRole = Object.keys(FIELD_ROLES).find((r) => user.roleKeys.some((k) => FIELD_ROLES[r].includes(k)));
     if (!appRole) throw badRequest(`${user.name} is not a pre-inspection agent or surveyor.`);
     if (user.status !== 'Active') throw badRequest(`${user.name} is ${user.status}.`);
     if (user.platform === 'web') throw badRequest(`${user.name} has web access only -- enable mobile access in Create Users.`);

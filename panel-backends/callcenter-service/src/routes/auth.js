@@ -2,8 +2,8 @@ import { Router } from 'express';
 import { settings } from '../config.js';
 import { signToken } from '../utils/jwt.js';
 import { asyncHandler, badRequest } from '../utils/http.js';
-import { authenticate } from '../middleware/authenticate.js';
-import { portalLogin, portalLogout, changePassword, forgetUser } from '../services/adminClient.js';
+import { authenticate, rolesOf, withRole } from '../middleware/authenticate.js';
+import { portalLogin, portalLogout, changePassword, forgetUser, getUser } from '../services/adminClient.js';
 import { MODULES } from '../constants.js';
 
 // Sign-in with the account created in Admin > Create Users. admin-service
@@ -22,6 +22,7 @@ const sessionUser = (u) => ({
     employeeId: u.employeeId,
     roleKey: u.roleKey,
     roleName: u.roleName,
+    roles: rolesOf(u).map((r) => ({ roleKey: r.roleKey, roleName: r.roleName })),
     organization: u.organization,
     branch: u.branch,
     agentCode: u.agentCode,
@@ -36,8 +37,26 @@ router.post('/login', asyncHandler(async (req, res) => {
     if (!identifier || !password) throw badRequest('Enter your User ID and password.');
     const { user } = await portalLogin(identifier, password, req);
     forgetUser(user.id);
-    const token = signToken({ sub: user.id, kind: 'callcenter' }, settings.jwtSecret, settings.jwtExpiresInSeconds);
-    res.json({ token, expiresIn: settings.jwtExpiresInSeconds, user: sessionUser(user) });
+    res.json(session(user));
+}));
+
+/** A session token for `user` acting in their active role (user.roleKey). */
+const session = (user) => ({
+    token: signToken({ sub: user.id, kind: 'callcenter', role: user.roleKey }, settings.jwtSecret, settings.jwtExpiresInSeconds),
+    expiresIn: settings.jwtExpiresInSeconds,
+    user: sessionUser(user),
+});
+
+/**
+ * POST /api/v1/auth/switch-role { roleKey } -- a user with several roles
+ * (Admin > Create Users) picks the one to work in; menu, dashboard and every
+ * permission check follow it. -> { token, expiresIn, user }
+ */
+router.post('/switch-role', authenticate, asyncHandler(async (req, res) => {
+    const roleKey = String(req.body?.roleKey ?? '');
+    const user = await getUser(req.user.id);
+    if (!rolesOf(user).some((r) => r.roleKey === roleKey)) throw badRequest('You do not have this role. Contact your admin.');
+    res.json(session(withRole(user, roleKey)));
 }));
 
 router.get('/me', authenticate, (req, res) => res.json({ user: sessionUser(req.user) }));

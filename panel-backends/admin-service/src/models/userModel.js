@@ -15,10 +15,19 @@ function handlerCounts() {
     return Object.fromEntries(rows.map((r) => [r.handler_id, r]));
 }
 
+/**
+ * A user can hold several roles (Create Users > Role, multi-select). `role_key`
+ * is the primary one (first picked); `data.roleKeys` holds them all.
+ */
+export const userRoleKeys = (primary, keys) => [...new Set([primary, ...(Array.isArray(keys) ? keys : [])].filter(Boolean))];
+
+/** SQL condition: the user holds role `?` (bind it twice). */
+export const HAS_ROLE_SQL = "(role_key = ? OR EXISTS (SELECT 1 FROM json_each(users.data, '$.roleKeys') WHERE value = ?))";
+
 /** `withImage`: include the profile image data URL (only the single-user read does -- lists stay small). */
 function toUser(row, counts, { withImage = false } = {}) {
     const data = parseJson(row.data, {});
-    const { capacityLimit = DEFAULT_CAPACITY, profileImage, ...rest } = data;
+    const { capacityLimit = DEFAULT_CAPACITY, profileImage, roleKeys, ...rest } = data;
     const c = counts?.[row.id];
     return {
         ...rest,
@@ -31,6 +40,7 @@ function toUser(row, counts, { withImage = false } = {}) {
         employeeId: row.employee_id,
         contact: row.contact,
         roleKey: row.role_key,
+        roleKeys: userRoleKeys(row.role_key, roleKeys),
         status: row.status,
         organization: row.organization,
         handlerStats: {
@@ -52,10 +62,10 @@ export const listUsers = () => {
     return db.prepare('SELECT * FROM users ORDER BY created_at DESC, id DESC').all().map((r) => toUser(r, counts));
 };
 
-/** Users holding one role, by name (portal directories: handlers, surveyors, approvers). */
+/** Users holding one role (primary or additional), by name (portal directories: handlers, surveyors, approvers). */
 export function listUsersByRole(roleKey) {
     const counts = handlerCounts();
-    return db.prepare('SELECT * FROM users WHERE role_key = ? ORDER BY name').all(roleKey).map((r) => toUser(r, counts));
+    return db.prepare(`SELECT * FROM users WHERE ${HAS_ROLE_SQL} ORDER BY name`).all(roleKey, roleKey).map((r) => toUser(r, counts));
 }
 
 export const findUserRow = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -118,7 +128,7 @@ export function setUserPassword(id, passwordHash, { mustChange = true } = {}) {
         .run(passwordHash, mustChange ? 1 : 0, nowIso(), nowIso(), id);
 }
 
-export const countUsersWithRole = (roleKey) => db.prepare('SELECT COUNT(*) AS n FROM users WHERE role_key = ?').get(roleKey).n;
+export const countUsersWithRole = (roleKey) => db.prepare(`SELECT COUNT(*) AS n FROM users WHERE ${HAS_ROLE_SQL}`).get(roleKey, roleKey).n;
 
 // ---- Send Link tokens ----
 export function insertResetToken({ tokenHash, userId, expiresAt, createdBy }) {

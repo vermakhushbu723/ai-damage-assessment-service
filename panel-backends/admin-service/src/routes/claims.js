@@ -188,8 +188,8 @@ router.post('/reassign', authenticate, asyncHandler(async (req, res) => {
     if (body.fromHandlerId === body.toHandlerId) throw badRequest('Pick a different handler.');
     const from = findUser(body.fromHandlerId);
     const to = findUser(body.toHandlerId);
-    if (!from || from.roleKey !== 'claim-handler') throw badRequest('The source handler does not exist.');
-    if (!to || to.roleKey !== 'claim-handler') throw badRequest('The target handler does not exist.');
+    if (!from || !from.roleKeys.includes('claim-handler')) throw badRequest('The source handler does not exist.');
+    if (!to || !to.roleKeys.includes('claim-handler')) throw badRequest('The target handler does not exist.');
     if (to.status !== 'Active') throw badRequest(`${to.name} is not active.`);
     if (body.count > from.handlerStats.inProgress) throw badRequest(`${from.name} has only ${from.handlerStats.inProgress} open claim(s).`);
     const moved = transaction(() => reassignClaims(from.id, to.id, body.count, OPEN_STAGES));

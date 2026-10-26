@@ -23,11 +23,24 @@ export async function authenticate(req, res, next) {
         const user = await getUser(claims.sub);
         if (!user) return res.status(401).json({ detail: 'This account no longer exists.' });
         if (user.blocked) return res.status(401).json({ detail: user.blocked });
-        req.user = user;
+        req.user = withRole(user, claims.role);
         return next();
     } catch (err) {
         return next(err);
     }
+}
+
+/** Roles the user may switch between here (older admin-service: just the one role). */
+export const rolesOf = (user) => (user.roles?.length ? user.roles : [{ roleKey: user.roleKey, roleName: user.roleName, permissions: user.permissions }]);
+
+/**
+ * The user acting in `roleKey` (picked in the portal's role switcher, kept in
+ * the session token). A role taken away in the Admin portal falls back to
+ * the user's default role.
+ */
+export function withRole(user, roleKey) {
+    const role = rolesOf(user).find((r) => r.roleKey === roleKey);
+    return role ? { ...user, roleKey: role.roleKey, roleName: role.roleName, permissions: role.permissions ?? {} } : user;
 }
 
 /** True when the user's role allows `action` (view | edit | create | approve | download) on `module`. */

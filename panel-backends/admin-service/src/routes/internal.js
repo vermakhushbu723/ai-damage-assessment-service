@@ -36,19 +36,33 @@ const PORTALS = { callcenter: 'Call Center Portal' };
 /** Modules this role may at least view. */
 const viewableModules = (role) => PERMISSION_MODULES.filter((m) => role?.permissions?.[m]?.view);
 
-/** Why this user cannot use a web portal, or null. */
-function portalBlock(user, role) {
-    if (user.status !== 'Active') return `This account is ${user.status}. Contact your admin.`;
+/** Why this role cannot be used on a web portal, or null. */
+function roleBlock(roleKey, role) {
     if (!role) return 'This account has no role. Contact your admin.';
-    if (MOBILE_ONLY_ROLES.includes(user.roleKey)) return `${role.name} accounts use the mobile app, not this portal.`;
-    if (user.platform === 'mobile') return 'This account has mobile access only. Ask your admin to enable web access.';
+    if (MOBILE_ONLY_ROLES.includes(roleKey)) return `${role.name} accounts use the mobile app, not this portal.`;
     if (!viewableModules(role).length) return 'Your role has no access to this portal. Contact your admin.';
     return null;
 }
 
-/** What a portal needs to know about its signed-in user. */
-function portalUser(user) {
-    const role = findRole(user.roleKey);
+/** Why this user cannot use a web portal at all, or null. */
+function accountBlock(user) {
+    if (user.status !== 'Active') return `This account is ${user.status}. Contact your admin.`;
+    if (user.platform === 'mobile') return 'This account has mobile access only. Ask your admin to enable web access.';
+    return null;
+}
+
+/**
+ * What a portal needs to know about its signed-in user. A user may hold
+ * several roles: `roles` lists those usable on a web portal (the portal lets
+ * the user switch between them); roleKey / permissions are the active one --
+ * `activeRoleKey` when it is one of them, else the primary role, else the
+ * first usable role.
+ */
+function portalUser(user, activeRoleKey) {
+    const all = user.roleKeys.map((key) => ({ key, role: findRole(key) }));
+    const usable = all.filter(({ key, role }) => !roleBlock(key, role));
+    const active = usable.find((r) => r.key === activeRoleKey) ?? usable.find((r) => r.key === user.roleKey) ?? usable[0] ?? all[0];
+    const role = active?.role;
     const branch = user.extra?.branchId ? findRecord('branches', user.extra.branchId) : null;
     return {
         id: user.id,
@@ -57,9 +71,10 @@ function portalUser(user) {
         email: user.email,
         contact: user.contact,
         employeeId: user.employeeId,
-        roleKey: user.roleKey,
+        roleKey: active?.key ?? user.roleKey,
         roleName: role?.name ?? user.roleKey,
         roleShort: role?.short ?? null,
+        roles: usable.map(({ key, role: r }) => ({ roleKey: key, roleName: r.name, roleShort: r.short ?? null, level: r.level ?? null, permissions: r.permissions ?? {} })),
         organization: user.organization,
         department: user.department ?? null,
         city: user.city ?? null,
@@ -71,7 +86,7 @@ function portalUser(user) {
         platform: user.platform,
         mustChangePassword: user.mustChangePassword,
         permissions: role?.permissions ?? {},
-        blocked: portalBlock(user, role),
+        blocked: accountBlock(user) ?? (usable.length ? null : roleBlock(active?.key, role)),
     };
 }
 
@@ -121,11 +136,15 @@ router.post('/portal-logout', (req, res) => {
     res.json({ ok: true });
 });
 
-/** GET /api/v1/internal/users/:id -- re-checked by the portals on every request (they cache it briefly). */
+/**
+ * GET /api/v1/internal/users/:id?role=claim-handler -- re-checked by the
+ * portals on every request (they cache it briefly); `role` = the role the
+ * user picked on the portal.
+ */
 router.get('/users/:id', (req, res) => {
     const user = findUser(req.params.id);
     if (!user) throw notFound('User');
-    res.json(portalUser(user));
+    res.json(portalUser(user, req.query.role ? String(req.query.role) : undefined));
 });
 
 /** POST /api/v1/internal/users/:id/change-password { currentPassword, newPassword } */
@@ -163,8 +182,9 @@ router.get('/directory', (req, res) => {
                 employeeId: u.employeeId,
                 email: u.email,
                 contact: u.contact,
-                roleKey: u.roleKey,
+                roleKey: key,
                 roleName: role.name,
+                primaryRoleKey: u.roleKey,
                 accountType: u.accountType ?? null,
                 status: u.status,
                 department: u.department ?? null,

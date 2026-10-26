@@ -7,7 +7,7 @@ import {
 } from '../constants.js';
 import {
     listUsers, findUser, findUserRow, findUserByLogin, findDuplicate, findByAgentCode, insertUser, updateUser, setUserStatus,
-    setUserPassword, insertResetToken,
+    setUserPassword, insertResetToken, userRoleKeys,
 } from '../models/userModel.js';
 import { findRole } from '../models/roleModel.js';
 import { findRecord } from '../models/recordModel.js';
@@ -29,6 +29,7 @@ const MAX_IMAGE_CHARS = 1.5 * 1024 * 1024; // 1 MB file as a data URL
 const SPEC = {
     accountType: { required: true, oneOf: ACCOUNT_TYPES, label: 'Account type' },
     roleKey: { required: true, label: 'Role' },
+    roleKeys: { type: 'array', label: 'Roles' },
     reportingManagerId: { label: 'Reporting manager' },
     name: { required: true, max: 60, label: 'Full name' },
     employeeId: { required: true, max: 40, label: 'Employee ID' },
@@ -69,6 +70,10 @@ function checkUser(body, existingId = '') {
         if (body.contact && body.altContact === body.contact) throw badRequest('Alternate contact number must differ from the contact number.');
     }
     if (body.roleKey !== undefined && !findRole(body.roleKey)) throw badRequest('Selected role does not exist.');
+    if (body.roleKeys !== undefined && body.roleKeys !== null) {
+        if (body.roleKeys.some((k) => typeof k !== 'string' || !findRole(k))) throw badRequest('One of the selected roles does not exist.');
+        if (body.roleKeys.length > 10) throw badRequest('A user can hold at most 10 roles.');
+    }
     if (body.reportingManagerId && body.reportingManagerId !== 'ADMIN') {
         if (body.reportingManagerId === existingId) throw badRequest('A user cannot report to themselves.');
         if (!findUserRow(body.reportingManagerId)) throw badRequest('Selected reporting manager does not exist.');
@@ -113,13 +118,15 @@ router.post('/', asyncHandler(async (req, res) => {
     if (tempPassword) checkPassword(tempPassword, 'Temp password');
     else tempPassword = generatePassword();
     const { capacityLimit, ...rest } = body;
+    const roleKeys = userRoleKeys(body.roleKey, body.roleKeys);
     const user = transaction(() => insertUser({
         ...rest,
+        roleKeys,
         id: nextSequentialId('users', 'USR', 1000),
         organization: organizationFor(body),
         extra: body.extra ?? {},
         zones: body.zones ?? [],
-        ...(body.roleKey === 'claim-handler' ? { capacityLimit: capacityLimit ?? DEFAULT_CAPACITY } : {}),
+        ...(roleKeys.includes('claim-handler') ? { capacityLimit: capacityLimit ?? DEFAULT_CAPACITY } : {}),
     }, { passwordHash: hashPassword(tempPassword), createdBy: req.admin.id }));
     res.status(201).json({ ...user, tempPassword });
 }));
@@ -138,6 +145,9 @@ router.patch('/:id', asyncHandler(async (req, res) => {
         if (k in body && body[k] === null) throw badRequest(`${SPEC[k].label} is required.`);
     }
     if ('accountType' in body || 'extra' in body) body.organization = organizationFor({ ...current, ...body }, current);
+    // The primary role is always one of the roles; a new primary alone replaces the old primary.
+    if ('roleKeys' in body) body.roleKeys = userRoleKeys(body.roleKey ?? current.roleKey, body.roleKeys);
+    else if ('roleKey' in body) body.roleKeys = userRoleKeys(body.roleKey, current.roleKeys.filter((k) => k !== current.roleKey));
     const updated = updateUser(current.id, body);
     res.json(updated);
 }));

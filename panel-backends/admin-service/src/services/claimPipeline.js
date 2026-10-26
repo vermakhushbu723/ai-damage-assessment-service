@@ -3,6 +3,7 @@ import { OPEN_STAGES, DEFAULT_CAPACITY } from '../constants.js';
 import { getSetting } from '../models/settingsModel.js';
 import { listRecords, findRecord, insertRecord } from '../models/recordModel.js';
 import { findClaim, upsertClaim } from '../models/claimModel.js';
+import { HAS_ROLE_SQL } from '../models/userModel.js';
 
 // What happens to a claim pushed by a claim system (POST /claims/ingest):
 //  1. Handler allocation rule (Allocation Load) -- a handler is "full" at
@@ -19,7 +20,7 @@ export function handlerPool() {
     const placeholders = OPEN_STAGES.map(() => '?').join(', ');
     const open = Object.fromEntries(db.prepare(`SELECT handler_id, COUNT(*) AS n FROM claims WHERE handler_id IS NOT NULL AND stage IN (${placeholders}) GROUP BY handler_id`)
         .all(...OPEN_STAGES).map((r) => [r.handler_id, r.n]));
-    return db.prepare("SELECT id, name, data FROM users WHERE role_key = 'claim-handler' AND status = 'Active'").all().map((u) => {
+    return db.prepare(`SELECT id, name, data FROM users WHERE ${HAS_ROLE_SQL} AND status = 'Active'`).all('claim-handler', 'claim-handler').map((u) => {
         const data = parseJson(u.data, {});
         return { id: u.id, name: u.name, branchId: data.extra?.branchId ?? null, capacity: data.capacityLimit ?? DEFAULT_CAPACITY, open: open[u.id] ?? 0 };
     });
