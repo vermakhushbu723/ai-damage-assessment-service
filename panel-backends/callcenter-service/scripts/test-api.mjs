@@ -204,12 +204,16 @@ try {
     check('my draft listed on the dashboard', r.data.intimations.rows.some((x) => x.id === claimId && x.status === 'Draft'), r.data?.intimations);
 
     // survey link (before submit is fine)
+    r = await AG2.post(`/claims/${claimId}/survey-link/generate`, {});
+    check('Generate Link -> preview url, nothing sent', r.status === 200 && r.data.link.url.includes(r.data.link.token) && !r.data.link.sentAt, r.data);
+    const previewToken = r.data.link.token;
     r = await AG2.post(`/claims/${claimId}/survey-link`, { recipients: ['Insured'], sendVia: [], mobile: '9876543210' });
     check('survey link needs a channel', r.status === 400);
     r = await AG2.post(`/claims/${claimId}/survey-link`, { recipients: ['Insured'], sendVia: ['SMS', 'Email'], mobile: '+91 98765 43210', email: 'amit.verma@test.in', autoReminder: true });
     check('survey link sent on 2 channels (tracked public link)', r.status === 200 && r.data.link.dispatch.status === 'Sent' && r.data.link.url.startsWith(`http://127.0.0.1:${CC_PORT}/api/v1/s/`), r.data);
     check('one I-Bima Assist ID per claim (no second IBIMA- number)', r.data.claim.id === claimId && !('uniqueId' in r.data.claim.link), r.data.claim.link);
     check('old unique-id endpoint is gone', (await AG2.post(`/claims/${claimId}/unique-id`)).status === 404);
+    check('sending keeps the generated link', r.data.link.token === previewToken);
     const closedToken = r.data.link.token;
     const opened = await fetch(r.data.link.url, { redirect: 'manual' });
     check('survey link opens -> recorded + redirected to the survey page', opened.status === 302 && opened.headers.get('location').startsWith('https://survey.test/s?token='));
@@ -227,6 +231,10 @@ try {
     r = await AG2.get('/dashboard?range=24h');
     check('dashboard counts the new intimation + link', r.data.stats.newIntimations.value === 1 && r.data.stats.linkSent.value === 2 && r.data.stats.totalIntimation.value === 1, r.data.stats);
     check('dashboard: priority filter', (await AG2.get('/dashboard?priority=High')).data.intimations.total === 0);
+    const inView = async (view) => (await AG2.get(`/claims?view=${view}`)).data.rows.map((x) => x.id);
+    check('My Claims: Total / New Intimations list the claim', (await inView('total')).includes(claimId) && (await inView('new')).includes(claimId));
+    check('My Claims: Link Sent lists it with the send time', (await inView('link')).includes(claimId) && !!(await AG2.get('/claims?view=link')).data.rows[0].linkSentAt);
+    check('My Claims: allocated claim is not in Pending Allocation', !(await inView('pending')).includes(claimId));
     r = await H.get(`/claims/${claimId}`);
     check('claim header for the handler (fraud from Admin)', r.status === 200 && r.data.fraud.available === true && r.data.claimType === 'Motor OD' && r.data.tat.text.startsWith('0D'), r.data);
 

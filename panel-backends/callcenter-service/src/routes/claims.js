@@ -210,7 +210,19 @@ router.get('/dashboard/analytics', can(MODULES.dashboard), (req, res) => {
 
 // ---------- claims ----------
 
-/** GET /api/v1/claims?search=&stage=&status=&mine=1&page=&pageSize= -- All Claims, New/Assigned, claim pickers. */
+/**
+ * My Claims lists, same rules as the dashboard KPI tiles.
+ * total = every submitted intimation, new = submitted in the last 24 hours,
+ * pending = open without a handler, link = survey link sent.
+ */
+const CLAIM_VIEWS = {
+    total: () => ['submitted_at IS NOT NULL', []],
+    new: () => ['submitted_at >= ?', [new Date(Date.now() - 86400_000).toISOString()]],
+    pending: () => ["status = 'Open' AND handler_id IS NULL", []],
+    link: () => ["json_extract(link, '$.sentAt') IS NOT NULL", []],
+};
+
+/** GET /api/v1/claims?view=total|new|pending|link&search=&stage=&status=&mine=1&page=&pageSize= -- My Claims lists, claim pickers. */
 router.get('/claims', (req, res) => {
     const where = ["(status <> 'Draft' OR created_by = ?)"];
     const params = [req.user.id];
@@ -226,6 +238,11 @@ router.get('/claims', (req, res) => {
     if (['Draft', 'Open', 'Closed'].includes(req.query.status)) {
         where.push('status = ?');
         params.push(req.query.status);
+    }
+    if (Object.hasOwn(CLAIM_VIEWS, req.query.view)) {
+        const [sql, args] = CLAIM_VIEWS[req.query.view]();
+        where.push(sql);
+        params.push(...args);
     }
     // New/Assigned: claims allocated to me, plus intimations of the last 24 hours.
     if (req.query.mine === '1') {
@@ -369,6 +386,26 @@ function cleanLinkSettings(input) {
     return out;
 }
 
+/** Gives the link its token (once per claim) and public survey URL. */
+function withSurveyUrl(link) {
+    link.token = link.token ?? randomToken(18);
+    link.url = settings.publicUrl
+        ? `${settings.publicUrl}/api/v1/s/${encodeURIComponent(link.token)}`
+        : `${settings.surveyLinkBase}?token=${encodeURIComponent(link.token)}`;
+    return link;
+}
+
+/**
+ * POST /api/v1/claims/:id/survey-link/generate -- "Generate Link": creates the
+ * claim's survey link for the preview without sending anything.
+ */
+router.post('/claims/:id/survey-link/generate', can(MODULES.intimation, 'edit'), (req, res) => {
+    const row = loadClaim(req);
+    const link = withSurveyUrl({ ...parseJson(row.link, {}), ...cleanLinkSettings(req.body ?? {}) });
+    setClaimFields(row.id, { link: JSON.stringify(link) });
+    res.json({ link, claim: toClaim(findClaimRow(row.id)) });
+});
+
 /**
  * POST /api/v1/claims/:id/survey-link { recipients, sendVia, mobile, email, autoReminder }
  * Generates the claim's survey link (once) and sends it on every chosen
@@ -385,10 +422,7 @@ router.post('/claims/:id/survey-link', can(MODULES.intimation, 'edit'), asyncHan
     if (via.some((c) => c !== 'Email') && !mobile) throw badRequest('Enter a valid 10-digit recipient mobile number.');
     if (via.includes('Email') && !isEmail(link.email)) throw badRequest('Enter a valid recipient email.');
 
-    link.token = link.token ?? randomToken(18);
-    link.url = settings.publicUrl
-        ? `${settings.publicUrl}/api/v1/s/${encodeURIComponent(link.token)}`
-        : `${settings.surveyLinkBase}?token=${encodeURIComponent(link.token)}`;
+    withSurveyUrl(link);
     const recipientLabel = link.recipients.includes('Both') ? 'Insured & Workshop' : link.recipients.join(' & ');
     const actor = actorOf(req);
     const i = parseJson(row.intimation, {});

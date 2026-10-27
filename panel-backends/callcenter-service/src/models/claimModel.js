@@ -151,6 +151,7 @@ export function toListItem(row) {
         amount: row.amount,
         intimatedAt: row.submitted_at ?? i.intimationDateTime ?? row.created_at,
         submittedAt: row.submitted_at,
+        linkSentAt: parseJson(row.link, {}).sentAt ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
     };
