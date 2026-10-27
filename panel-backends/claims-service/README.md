@@ -4,7 +4,7 @@ Backend for `car-damage-insurance-web-app`'s claim data -- the Owner &
 Vehicle Details form creates a claim here, and each portal's Dashboard
 lists its own claims from here. Kept **separate** from `../../ai-training-backend/server` (AI ILA
 backend) and `../auth-service` (login backend) -- own folder, own port
-(8020), own SQLite DB (`claims.db`).
+(8020), own SQLite DB (`claimsServiceProvider.db`).
 
 ```
 claims-service/

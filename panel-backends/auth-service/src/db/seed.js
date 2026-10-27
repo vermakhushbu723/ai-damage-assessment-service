@@ -4,6 +4,7 @@
 // screen) before this handles anyone's real credentials -- this is
 // illustrative demo data only, clearly labelled as such below.
 
+import { pathToFileURL } from 'node:url';
 import { db } from './database.js';
 import { hashPassword } from '../utils/password.js';
 import { ROLES } from '../schemas/roles.js';
@@ -33,7 +34,7 @@ export function seedDemoUsers() {
 
 // Allows `npm run seed` as a standalone command in addition to running
 // automatically on server start (see src/server.js).
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     seedDemoUsers();
     console.log('[auth-service] seed complete.');
 }

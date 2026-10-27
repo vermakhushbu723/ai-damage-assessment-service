@@ -26,7 +26,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const zipUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024 * 1024 } });
 const router = Router();
 
-const RAW_POOL_ROOT = path.resolve(process.cwd(), settings.trainingRawPoolDir);
+const RAW_POOL_ROOT = settings.trainingRawPoolDir;
 
 function imagesDir(vehicleType) {
     return path.join(RAW_POOL_ROOT, vehicleType, 'images');
@@ -202,8 +202,8 @@ router.post('/api/v1/annotations/import', zipUpload.single('export'), (req, res)
     const tempPath = path.join(os.tmpdir(), `annotation-export-${randomUUID()}.zip`);
     fs.writeFileSync(tempPath, req.file.buffer);
 
-    const trainingDir = path.resolve(process.cwd(), settings.trainingDir);
-    const pythonExe = path.resolve(process.cwd(), settings.trainingPythonExecutable);
+    const trainingDir = settings.trainingDir;
+    const pythonExe = settings.trainingPythonExecutable;
     const args = [
         path.join('scripts', 'import_annotation_export.py'),
         '--source', tempPath,

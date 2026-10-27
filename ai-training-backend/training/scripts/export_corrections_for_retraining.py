@@ -41,7 +41,7 @@ SERVICE_ROOT = TRAINING_ROOT.parent
 # go through the Node API or duplicate its schema; DATABASE_FILE/UPLOAD_DIR
 # below match server/.env's defaults, override via env vars if you changed
 # either there.
-DB_FILE = Path(os.environ.get("SERVER_DATABASE_FILE", SERVICE_ROOT / "server" / "ai_damage_assessment.db"))
+DB_FILE = Path(os.environ.get("SERVER_DATABASE_FILE", SERVICE_ROOT / "server" / "aiDamageAssessmentServiceProvider.db"))
 UPLOAD_DIR = Path(os.environ.get("SERVER_UPLOAD_DIR", SERVICE_ROOT / "server" / "uploads"))
 
 # Keep in sync with prepare_dataset.py's DAMAGE_TYPE_NAMES (same reasoning

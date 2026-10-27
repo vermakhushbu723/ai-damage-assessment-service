@@ -6,9 +6,21 @@
 // run. Replaces SQLAlchemy (app/db/database.py + app/db/models.py) from the
 // old Python service; same two tables, same columns.
 
+import { existsSync, renameSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { settings } from '../config.js';
 
+// The file was called ai_damage_assessment.db before it got the ServiceProvider name; an
+// existing one (with its -wal/-shm companions) is renamed once on startup so
+// no data is lost on upgrade.
+const legacyFile = join(dirname(settings.databaseFile), 'ai_damage_assessment.db');
+if (legacyFile !== settings.databaseFile && !existsSync(settings.databaseFile) && existsSync(legacyFile)) {
+    for (const suffix of ['', '-wal', '-shm']) {
+        if (existsSync(legacyFile + suffix)) renameSync(legacyFile + suffix, settings.databaseFile + suffix);
+    }
+    console.log(`[ai-damage-server] Renamed ${legacyFile} -> ${settings.databaseFile}`);
+}
 export const db = new DatabaseSync(settings.databaseFile);
 db.exec('PRAGMA journal_mode = WAL');
 

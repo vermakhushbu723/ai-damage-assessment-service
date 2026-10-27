@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// The service folder (one level up from src/). .env and every relative path
+// below resolve from here, so the service behaves the same whichever
+// directory it is started from (pm2, npm start, node src/server.js, ...).
+const SERVICE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+dotenv.config({ path: resolve(SERVICE_ROOT, '.env') });
+const fromRoot = (path) => resolve(SERVICE_ROOT, path);
 
 function toList(csv) {
     return csv.split(',').map((s) => s.trim()).filter(Boolean);
@@ -15,16 +24,16 @@ export const settings = {
     // llama3.1:8b if you want the spec-exact model and have the resources.
     ollamaModel: process.env.OLLAMA_MODEL || 'llama3.2:3b',
     ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_SECONDS || 60) * 1000,
-    databaseFile: process.env.DATABASE_FILE || './ai_damage_assessment.db',
-    uploadDir: process.env.UPLOAD_DIR || './uploads',
+    databaseFile: fromRoot(process.env.DATABASE_FILE || './aiDamageAssessmentServiceProvider.db'),
+    uploadDir: fromRoot(process.env.UPLOAD_DIR || './uploads'),
     // Where Annotation Studio saves uploaded photos + YOLO labels -- the
     // exact `raw_pool/<vehicle_type>/{images,labels}/` layout
     // training/scripts/prepare_dataset.py expects (see its docstring).
     // Default lives one level up from server/, next to training/data/.
-    trainingRawPoolDir: process.env.TRAINING_RAW_POOL_DIR || '../training/raw_pool',
+    trainingRawPoolDir: fromRoot(process.env.TRAINING_RAW_POOL_DIR || '../training/raw_pool'),
     // Where training/ (scripts + data + runs/) lives, one level up from
     // server/. Passed as `cwd` when spawning prepare_dataset.py/train.py.
-    trainingDir: process.env.TRAINING_DIR || '../training',
+    trainingDir: fromRoot(process.env.TRAINING_DIR || '../training'),
     // Python executable used to run the *training* scripts (prepare_dataset.py,
     // train.py) -- separate from yolo-service's own Python, since training
     // needs the heavier `ultralytics` + `torch` install (see
@@ -32,9 +41,9 @@ export const settings = {
     // training/README.md ("python -m venv .venv-training" in
     // ai-training-backend/); override if you set it up elsewhere or use a system Python
     // that already has training/requirements.txt installed.
-    trainingPythonExecutable: process.env.TRAINING_PYTHON || (
+    trainingPythonExecutable: fromRoot(process.env.TRAINING_PYTHON || (
         process.platform === 'win32' ? '../.venv-training/Scripts/python.exe' : '../.venv-training/bin/python'
-    ),
+    )),
     // The web app's Vite dev server runs with `https: true` (self-signed
     // cert) -- both schemes are listed since the browser's actual origin
     // depends on that config. Set CORS_ORIGINS=* to allow ANY origin

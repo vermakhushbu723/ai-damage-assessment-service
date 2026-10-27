@@ -158,7 +158,7 @@ doc, these do **not** share a model after fine-tuning starts.
 Once a validated checkpoint is deployed (`YOLO_CAR_WEIGHTS=training/runs/segment/car_finetune/weights/best.pt`
 in `yolo-service/.env`) and handlers are correcting AI output in the AI ILA screen, those
 corrections accumulate in the Node API's `corrections` table — a plain SQLite file at
-`server/ai_damage_assessment.db` by default (`GET http://localhost:8000/api/v1/corrections/stats`
+`server/aiDamageAssessmentServiceProvider.db` by default (`GET http://localhost:8000/api/v1/corrections/stats`
 shows how many are pending). `export_corrections_for_retraining.py` reads that file directly with
 Python's stdlib `sqlite3` (no Node/API call needed to run it, but the **Node API must have run at
 least once** so the file and its `uploads/` photos exist). When you're ready to retrain (monthly,

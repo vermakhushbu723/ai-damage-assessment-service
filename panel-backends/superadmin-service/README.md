@@ -4,7 +4,7 @@ Backend for the **IBima Assist Super Admin console**
 (`car-damage-insurance-superadmin`, live at https://superadmin.ibimaassist.online).
 
 Kept separate from everything else in this repo: its own folder, port (**8030**),
-SQLite file (`superadmin.db`), JWT secret and PM2 process (`superadmin-service`).
+SQLite file (`superadminServiceProvider.db`), JWT secret and PM2 process (`superadmin-service`).
 
 | Service | Port | What it is |
 |---|---|---|
@@ -40,7 +40,7 @@ scripts/test-api.mjs   end-to-end API test on a throwaway database
 cp .env.example .env      # set BOOTSTRAP_*_PASSWORD, or random ones are printed on first start
 npm install
 npm run dev               # http://127.0.0.1:8030/api/v1/health
-npm run test:api          # 150+ checks, uses its own temp DB (never touches superadmin.db)
+npm run test:api          # 150+ checks, uses its own temp DB (never touches superadminServiceProvider.db)
 ```
 
 The console's Vite dev server (`npm run dev` in car-damage-insurance-superadmin, port 5180)

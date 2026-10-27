@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// The service folder (one level up from src/). .env and every relative path
+// below resolve from here, so the service behaves the same whichever
+// directory it is started from (pm2, npm start, node src/server.js, ...).
+const SERVICE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+dotenv.config({ path: resolve(SERVICE_ROOT, '.env') });
+const fromRoot = (path) => resolve(SERVICE_ROOT, path);
 
 const toList = (csv) => csv.split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -12,7 +21,7 @@ export const settings = {
     port: Number(process.env.PORT || 8030),
     jwtSecret,
     jwtExpiresInSeconds: Number(process.env.JWT_EXPIRES_IN_SECONDS || 28800),
-    databaseFile: process.env.DATABASE_FILE || './superadmin.db',
+    databaseFile: fromRoot(process.env.DATABASE_FILE || './superadminServiceProvider.db'),
     corsOrigins: process.env.CORS_ORIGINS === '*'
         ? true
         : toList(process.env.CORS_ORIGINS || 'http://localhost:5180,http://127.0.0.1:5180,http://localhost:4180'),

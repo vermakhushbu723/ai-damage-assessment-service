@@ -2,7 +2,7 @@
 
 Backend of the **Call Center / Claim Management portal** (`car-damage-insurance-callcenter`,
 https://cms.ibimaassist.online). Express + built-in `node:sqlite`, port **8050**, own
-`callcenter.db` and `uploads/`, PM2 name `callcenter-service`.
+`callcenterServiceProvider.db` and `uploads/`, PM2 name `callcenter-service`.
 
 ## Who signs in
 

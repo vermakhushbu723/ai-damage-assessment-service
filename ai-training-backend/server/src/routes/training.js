@@ -16,9 +16,9 @@ import { VEHICLE_TYPES } from '../schemas/constants.js';
 
 const router = Router();
 
-const TRAINING_DIR = path.resolve(process.cwd(), settings.trainingDir);
-const PYTHON_EXE = path.resolve(process.cwd(), settings.trainingPythonExecutable);
-const RAW_POOL_ROOT = path.resolve(process.cwd(), settings.trainingRawPoolDir);
+const TRAINING_DIR = settings.trainingDir;
+const PYTHON_EXE = settings.trainingPythonExecutable;
+const RAW_POOL_ROOT = settings.trainingRawPoolDir;
 const RUNS_ROOT = path.join(TRAINING_DIR, 'runs', 'segment');
 const MAX_LOG_LINES = 4000;
 

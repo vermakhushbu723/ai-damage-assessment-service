@@ -13,6 +13,7 @@
 // are separate accounts in auth-service.
 
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { db } from './database.js';
 
 // role -> { userId, username, claims: [...] }. Add a new portal's seed data
@@ -80,7 +81,7 @@ export function seedSampleClaims() {
     }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
     seedSampleClaims();
     console.log('[claims-service] seed complete.');
 }

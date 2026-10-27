@@ -58,7 +58,7 @@ check this first.
 
 ## superadmin-service (Super Admin console backend)
 
-Separate Node service in `panel-backends/superadmin-service/` (port **8030**, own `superadmin.db`, own JWT
+Separate Node service in `panel-backends/superadmin-service/` (port **8030**, own `superadminServiceProvider.db`, own JWT
 secret, PM2 name `superadmin-service`). It is **not** exposed on `api.ibimaassist.online`:
 nginx proxies `https://superadmin.ibimaassist.online/api/` to it, so the console calls its
 API on its own domain (no CORS, no new DNS record). See `panel-backends/superadmin-service/README.md`.
@@ -90,11 +90,11 @@ location /api/ {
 then `sudo nginx -t && sudo systemctl reload nginx`.
 
 Redeploy: `git pull && cd panel-backends/superadmin-service && npm ci --omit=dev && pm2 restart superadmin-service`.
-Backup = copy `superadmin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
+Backup = copy `superadminServiceProvider.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode).
 
 ## admin-service (Admin portal backend)
 
-Separate Node service in `panel-backends/admin-service/` (port **8040**, own `admin.db`, own JWT secret,
+Separate Node service in `panel-backends/admin-service/` (port **8040**, own `adminServiceProvider.db`, own JWT secret,
 PM2 name `admin-service`). nginx proxies `https://admin.ibimaassist.online/api/` to it, so
 the portal calls its API on its own domain. See `panel-backends/admin-service/README.md`.
 
@@ -131,7 +131,7 @@ location /api/ {
 then `sudo nginx -t && sudo systemctl reload nginx`.
 
 Redeploy: `git pull && cd panel-backends/admin-service && npm ci --omit=dev && pm2 restart admin-service`.
-Backup = copy `admin.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode)
+Backup = copy `adminServiceProvider.db` (stop the process or use `sqlite3 .backup`; it runs in WAL mode)
 **and** the `uploads/` folder (Pre-Inspection app photos, videos, documents, signatures).
 
 ## Step 1 — Pick a VPS plan
@@ -525,4 +525,4 @@ curl -s 127.0.0.1:8050/api/v1/health
 ```
 
 Redeploy: `git pull`, `npm ci --omit=dev` (if package.json changed), `pm2 restart callcenter-service`.
-Back up `callcenter.db` + `uploads/` together. nginx needs `client_max_body_size 12m` for DMS uploads.
+Back up `callcenterServiceProvider.db` + `uploads/` together. nginx needs `client_max_body_size 12m` for DMS uploads.

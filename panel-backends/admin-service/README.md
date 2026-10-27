@@ -4,7 +4,7 @@ Backend for the **IBima Assist Admin portal**
 (`car-damage-insurance-admin`, the insurer's admin console at https://admin.ibimaassist.online).
 
 Kept separate from everything else in this repo: its own folder, port (**8040**),
-SQLite file (`admin.db`), JWT secret and PM2 process (`admin-service`).
+SQLite file (`adminServiceProvider.db`), JWT secret and PM2 process (`admin-service`).
 
 | Service | Port | What it is |
 |---|---|---|
@@ -42,7 +42,7 @@ scripts/test-api.mjs     end-to-end API test on a throwaway database
 cp .env.example .env      # set BOOTSTRAP_ADMIN_PASSWORD, or a random one is printed on first start
 npm install
 npm run dev               # http://127.0.0.1:8040/api/v1/health
-npm run test:api          # 150+ checks, own temp DB + mock external API (never touches admin.db)
+npm run test:api          # 150+ checks, own temp DB + mock external API (never touches adminServiceProvider.db)
 ```
 
 The portal's Vite dev server (`npm run dev` in car-damage-insurance-admin, port 5200)
@@ -170,7 +170,7 @@ tokens never open these. 5 wrong passwords lock the account for 15 minutes.
 | POST | `/field/inspections/:id/submit` | Vehicle Information / Damage Review "Submit Survey" (checks owner details, photos, both signatures + declarations + recommendation) |
 | POST | `/field/inspections/:id/repair-submit` | Repair Submission "Submit" -- for a case that needs repair (not recommended, rejected, or damage survey); a rejected case goes back to Pending Review |
 
-Files are stored under `UPLOADS_DIR/<PI ref>/` (back them up with `admin.db`).
+Files are stored under `UPLOADS_DIR/<PI ref>/` (back them up with `adminServiceProvider.db`).
 
 **Email:** no mail server is configured, so "Send Link" returns the link for the admin
 to share (`emailSent: false`).

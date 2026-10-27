@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import dotenv from 'dotenv';
+
+// The service folder (one level up from src/). .env and every relative path
+// below resolve from here, so the service behaves the same whichever
+// directory it is started from (pm2, npm start, node src/server.js, ...).
+const SERVICE_ROOT = fileURLToPath(new URL('..', import.meta.url));
+dotenv.config({ path: resolve(SERVICE_ROOT, '.env') });
+const fromRoot = (path) => resolve(SERVICE_ROOT, path);
 
 const toList = (csv) => csv.split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -12,7 +21,7 @@ export const settings = {
     port: Number(process.env.PORT || 8040),
     jwtSecret,
     jwtExpiresInSeconds: Number(process.env.JWT_EXPIRES_IN_SECONDS || 28800),
-    databaseFile: process.env.DATABASE_FILE || './admin.db',
+    databaseFile: fromRoot(process.env.DATABASE_FILE || './adminServiceProvider.db'),
     corsOrigins: process.env.CORS_ORIGINS === '*'
         ? true
         : toList(process.env.CORS_ORIGINS || 'http://localhost:5200,http://127.0.0.1:5200,http://localhost:4200'),
@@ -29,7 +38,7 @@ export const settings = {
     latestVersion: process.env.LATEST_VERSION || process.env.APP_VERSION || '2.4.1',
     latestReleaseDate: process.env.LATEST_RELEASE_DATE || null,
     // Pre-inspection app uploads (photos, walk-around video, documents, signatures).
-    uploadsDir: process.env.UPLOADS_DIR || './uploads',
+    uploadsDir: fromRoot(process.env.UPLOADS_DIR || './uploads'),
     maxPhotoMb: Number(process.env.MAX_PHOTO_MB || 15),
     maxVideoMb: Number(process.env.MAX_VIDEO_MB || 150),
     // How long a signed media link (admin <img>/<video>, app thumbnails) stays valid.
