@@ -1,11 +1,15 @@
 import { app } from './app.js';
 import { settings } from './config.js';
-import { flush } from './services/sync.js';
+import { flush, queueSubmittedClaims } from './services/sync.js';
 import { sendDueReminders } from './services/reminders.js';
 
 if (!settings.adminServiceKey) {
     console.warn('[callcenter-service] WARNING: ADMIN_SERVICE_KEY is empty -- nobody can sign in and claims are not pushed to the Admin portal.');
 }
+
+// Re-push every claim once per start, so the Admin portal always has the current
+// payload (e.g. claim.sp for its Service Provider dashboard). Ingest is an upsert.
+queueSubmittedClaims();
 
 // Push queued claims / logs to the Admin portal and send due reminders every minute.
 const tick = async () => {

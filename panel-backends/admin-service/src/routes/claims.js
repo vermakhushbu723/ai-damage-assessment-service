@@ -3,6 +3,7 @@ import { asyncHandler, validate, badRequest, notFound } from '../utils/http.js';
 import { authenticate, serviceKeyOrAdmin } from '../middleware/authenticate.js';
 import {
     CLAIM_STAGES, CLAIM_TYPES, REGIONS, OPEN_STAGES, TRIGGER_STATUSES, COMM_CHANNELS, COMM_LOG_STATUSES,
+    SP_STAGES, SP_STEP_STATUSES, SP_FEE_BILL_STATUSES,
 } from '../constants.js';
 import { listClaims, findClaim, upsertClaim, reassignClaims } from '../models/claimModel.js';
 import { findUser } from '../models/userModel.js';
@@ -36,7 +37,23 @@ const CLAIM_SPEC = {
     // Evidence flags the fraud trigger rules look at.
     duplicateDocument: { type: 'boolean', label: 'Duplicate document' },
     damageMismatch: { type: 'boolean', label: 'Damage mismatch' },
+    sp: { type: 'object', label: 'Service Provider journey' },
 };
+
+/** claim.sp: only known keys and values are kept (anything else falls back to the safe default). */
+function cleanSp(sp) {
+    const count = (v) => (Number.isInteger(v) && v >= 0 && v < 100_000 ? v : 0);
+    const oneOf = (v, list, fallback) => (list.includes(v) ? v : fallback);
+    return {
+        stage: oneOf(sp.stage, SP_STAGES, 'Intimation'),
+        linkSent: sp.linkSent === true,
+        docsPending: count(sp.docsPending),
+        docsReceived: count(sp.docsReceived),
+        aiIla: oneOf(sp.aiIla, SP_STEP_STATUSES, 'Pending'),
+        handlerIla: oneOf(sp.handlerIla, SP_STEP_STATUSES, 'Pending'),
+        feeBill: oneOf(sp.feeBill, SP_FEE_BILL_STATUSES, null),
+    };
+}
 
 const TRIGGER_SPEC = {
     id: { label: 'Trigger id' },
@@ -107,6 +124,7 @@ router.post('/ingest', serviceKeyOrAdmin, asyncHandler(async (req, res) => {
         if (c.intimatedAt && !isDate(c.intimatedAt)) throw badRequest(`Claim ${c.id}: intimatedAt is not a valid date.`);
         if (isNew && !c.intimatedAt) c.intimatedAt = new Date().toISOString();
         if (c.intimatedAt) c.intimatedAt = new Date(c.intimatedAt).toISOString();
+        if (c.sp) c.sp = cleanSp(c.sp);
         return Object.fromEntries(Object.entries(c).filter(([, v]) => v !== null));
     });
     const cleanTriggers = triggers.map((raw, i) => {

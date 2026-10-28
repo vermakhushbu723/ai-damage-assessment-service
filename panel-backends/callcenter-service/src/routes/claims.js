@@ -469,7 +469,7 @@ router.post('/claims/:id/survey-link', can(MODULES.intimation, 'edit'), asyncHan
         }
         audit(row.id, 'Survey link sent', `${results.map((r) => `${r.channel}: ${r.status}`).join(', ')}`, actor);
     });
-    flush().catch(() => {});
+    syncClaim(row.id).catch(() => {}); // also pushes the communication logs
     res.json({ link, claim: toClaim(findClaimRow(row.id)) });
 }));
 

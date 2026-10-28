@@ -44,6 +44,10 @@ export const CLAIM_TYPES = ['Motor Vehicle', 'Two Wheeler', 'Commercial Vehicle'
 export const CLAIM_STAGES = ['Intimation', 'Survey', 'AI ILA', 'ILA', 'FLA', 'Settled', 'Rejected'];
 export const OPEN_STAGES = ['Intimation', 'Survey', 'AI ILA', 'ILA', 'FLA'];
 export const CLOSED_STAGES = ['Settled', 'Rejected'];
+// Service Provider journey of a claim (claim.sp, sent by callcenter-service) for the Service Provider dashboard.
+export const SP_STAGES = ['Intimation', 'Handler Allocation', 'AI ILA', 'Handler ILA', 'FLA', 'Fee Bill', 'DMS'];
+export const SP_STEP_STATUSES = ['Pending', 'In Progress', 'Completed'];
+export const SP_FEE_BILL_STATUSES = ['Pending', 'Submitted'];
 export const JOURNEY_STAGES = {
     saas: ['Intimation', 'Handler Allocation', 'Surveyor Allocation', 'Claim Details', 'AI ILA', 'Handler ILA', 'FLA', 'Recommendation', 'Approval', 'Settlement', 'DMS'],
     full: ['Intimation', 'Handler Allocation', 'Surveyor Allocation', 'Claim Details', 'AI ILA', 'Handler ILA', 'FLA', 'Recommendation', 'Approval', 'Survey Fee Bill', 'Settlement', 'DMS'],

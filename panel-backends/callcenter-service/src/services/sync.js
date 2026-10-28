@@ -1,7 +1,7 @@
 import { db, nowIso, parseJson } from '../db/database.js';
 import { ingest } from './adminClient.js';
-import { findClaimRow, setClaimFields, addEvent, completeStage } from '../models/claimModel.js';
-import { ADMIN_STAGE, ADMIN_CLAIM_TYPE, REGION_OF_STATE, ADMIN_CHANNEL, COMPLETED } from '../constants.js';
+import { findClaimRow, setClaimFields, addEvent, completeStage, completedStages, getDoc } from '../models/claimModel.js';
+import { ADMIN_STAGE, ADMIN_CLAIM_TYPE, REGION_OF_STATE, ADMIN_CHANNEL, COMPLETED, REQUIRED_DOC_TYPES } from '../constants.js';
 import { settings } from '../config.js';
 
 // Every submitted claim (and its communication log) is pushed to the Admin
@@ -17,6 +17,41 @@ const MAX_BATCH = 200;
 export function queue(kind, ref) {
     db.prepare(`INSERT INTO outbox (kind, ref, created_at) VALUES (?, ?, ?)
                 ON CONFLICT (kind, ref) DO UPDATE SET attempts = 0, last_error = NULL`).run(kind, ref, nowIso());
+}
+
+/**
+ * Where the claim is on the Service Provider journey (Intimation > Handler
+ * Allocation > AI ILA > Handler ILA > FLA > Fee Bill > DMS) plus the counts the
+ * Admin portal's Service Provider dashboard shows.
+ */
+function spDetails(row) {
+    const done = completedStages(row.id);
+    const ai = getDoc(row.id, 'aiReview', {});
+    const liability = getDoc(row.id, 'liability');
+    const paybill = getDoc(row.id, 'paybill');
+    const files = db.prepare('SELECT doc_type FROM documents WHERE claim_id = ? AND replaced_at IS NULL').all(row.id).map((d) => d.doc_type);
+    const aiIla = done['ai-ila'] ? 'Completed' : ai.status === 'done' ? 'In Progress' : 'Pending';
+    const handlerIla = liability?.status === 'Submitted' ? 'Completed' : liability ? 'In Progress' : 'Pending';
+    const stage = {
+        intimation: 'Intimation',
+        'handler-allocation': 'Handler Allocation',
+        'surveyor-assignment': 'AI ILA', // no surveyor step for a Service Provider: handler allocated, AI ILA next
+        'claim-details': 'AI ILA',
+        'ai-ila': 'AI ILA',
+        fla: handlerIla === 'Completed' ? 'FLA' : 'Handler ILA',
+        'payment-recommendation': 'Fee Bill',
+        'survey-paybill': 'Fee Bill',
+        [COMPLETED]: 'DMS',
+    }[row.stage] ?? 'Intimation';
+    return {
+        stage,
+        linkSent: !!parseJson(row.link, {}).sentAt,
+        docsReceived: files.length,
+        docsPending: REQUIRED_DOC_TYPES.filter((t) => !files.includes(t)).length,
+        aiIla,
+        handlerIla,
+        feeBill: paybill?.status === 'Generated' ? 'Submitted' : stage === 'Fee Bill' ? 'Pending' : null,
+    };
 }
 
 /** The claim as admin-service's ingest expects it. */
@@ -35,6 +70,7 @@ function claimPayload(row) {
         ...(REGION_OF_STATE[row.state] ? { region: REGION_OF_STATE[row.state] } : {}),
         intimatedAt: row.submitted_at,
         vehicleNo: row.vehicle_no ?? undefined,
+        sp: spDetails(row),
     };
 }
 
@@ -118,6 +154,11 @@ export function flush() {
  * Queue + immediate push of one claim (after submit / stage changes). A
  * handler picked by the Admin portal re-queues the claim, so push twice at most.
  */
+/** Queues every submitted claim for the next flush. */
+export function queueSubmittedClaims() {
+    for (const { id } of db.prepare("SELECT id FROM claims WHERE status <> 'Draft'").all()) queue('claim', id);
+}
+
 export async function syncClaim(claimId) {
     queue('claim', claimId);
     const first = await flush();

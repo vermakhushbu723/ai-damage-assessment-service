@@ -226,6 +226,8 @@ try {
     check('submit twice -> 409', (await AG2.post(`/claims/${claimId}/submit`)).status === 409);
     r = await A.get(`/claims/${claimNo}`);
     check('Admin portal has the claim with the same handler', r.status === 200 && r.data.handlerId === firstHandler && r.data.stage === 'Intimation' && r.data.customer === 'Amit Verma', r.data);
+    check('Admin portal gets the Service Provider journey (claim.sp)', r.data.sp?.stage === 'AI ILA' && r.data.sp.linkSent === true
+        && r.data.sp.aiIla === 'Pending' && r.data.sp.handlerIla === 'Pending' && r.data.sp.docsPending === 5 && r.data.sp.feeBill === null, r.data.sp);
     r = await A.get('/comm-logs');
     check('Admin Communication Logs got the survey link messages', Array.isArray(r.data) && r.data.filter((l) => l.claim === claimNo).length >= 2, r.data?.length);
     r = await AG2.get('/dashboard?range=24h');

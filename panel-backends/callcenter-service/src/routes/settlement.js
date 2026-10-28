@@ -108,6 +108,7 @@ router.post(`${KIND_PATH}/parts`, canKind('edit'), (req, res) => {
     const n = (doc.parts ?? []).reduce((m, p) => Math.max(m, Number(String(p.id).split('-')[1]) || 0), 0) + 1;
     doc.parts = [...(doc.parts ?? []), { id: `LP-${n}`, ...part }];
     putDoc(row.id, kind, { ...doc, status: 'Draft' }, actorOf(req));
+    syncClaim(row.id).catch(() => {}); // Handler ILA "In Progress" on the Admin portal
     audit(row.id, `${KINDS[kind].label} part added`, `${part.part} (${part.action})`, actorOf(req));
     res.status(201).json(liabilityState(row, kind));
 });

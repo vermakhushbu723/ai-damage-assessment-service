@@ -11,6 +11,7 @@ import { loadClaim } from './claims.js';
 import { buildZip } from '../utils/zip.js';
 import { pdfImage, sendPdf } from '../utils/pdf.js';
 import { fmtDateTime } from '../utils/format.js';
+import { syncClaim } from '../services/sync.js';
 
 // Documents DMS: per-claim uploads by document type. Types that hold one
 // paper (RC, DL, policy, ...) keep only the newest file as current; the older
@@ -83,6 +84,8 @@ export function storeDocument(claimId, type, { buf, mime, name }, actor, { sameN
             .run(id, claimId, type, fileName, mime, buf.length, sha256(buf), storedName, actor.id, actor.name, nowIso());
         audit(claimId, 'Document uploaded', `${DOC_TYPES[type]} · ${fileName}`, actor);
     });
+    // Documents pending / received counts on the Admin portal.
+    syncClaim(claimId).catch(() => {});
     return toDocument(db.prepare('SELECT * FROM documents WHERE id = ?').get(id));
 }
 

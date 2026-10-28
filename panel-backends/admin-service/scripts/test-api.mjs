@@ -276,6 +276,11 @@ try {
     check('ingest new claim needs stage', (await post('/claims/ingest', { claims: [{ id: 'CLM-Y' }] })).status === 400);
     r = await post('/claims/ingest', { claims: [{ id: 'CLM-1000', stage: 'FLA' }] });
     check('ingest updates by id (admin token)', r.data?.claims.updated === 1);
+    r = await post('/claims/ingest', { claims: [{ id: 'CLM-1001', sp: { stage: 'Handler ILA', linkSent: true, docsPending: 2, docsReceived: 'x', aiIla: 'Completed', handlerIla: 'Hacked', feeBill: 'Pending', extra: 1 } }] });
+    const spClaim = (await get('/claims/CLM-1001')).data;
+    check('ingest keeps claim.sp, cleaned', r.status === 200 && spClaim.sp?.stage === 'Handler ILA' && spClaim.sp.linkSent === true && spClaim.sp.docsPending === 2
+        && spClaim.sp.docsReceived === 0 && spClaim.sp.handlerIla === 'Pending' && spClaim.sp.feeBill === 'Pending' && !('extra' in spClaim.sp), spClaim.sp);
+    check('ingest rejects a non-object sp', (await post('/claims/ingest', { claims: [{ id: 'CLM-1001', sp: 'x' }] })).status === 400);
     r = await get('/claims');
     const c1000 = r.data.find((c) => c.id === 'CLM-1000');
     check('claims list resolves handler + branch names', r.data.length === 6 && c1000.handler === 'Ajay Sharma' && c1000.branch === 'Mumbai HO' && c1000.stage === 'FLA' && c1000.customer === 'Customer 0', c1000);
