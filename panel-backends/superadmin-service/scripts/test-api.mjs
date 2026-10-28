@@ -474,6 +474,16 @@ try {
     check('system: audit login OFF stops recording sign-ins', loginsAfter === loginsBefore);
     await call('PATCH', '/system/settings', { token: master, body: { auditLogin: true } });
 
+    // ---------------- Manual IBima Assist ID / SP claim stages ----------------
+    r = await call('POST', '/organizations', { token: master, body: orgBody({ name: 'Manual Id One', ibimaId: 'a b' }) });
+    check('orgs: invalid manual IBima ID -> 400', r.status === 400);
+    r = await call('POST', '/organizations', { token: master, body: orgBody({ name: 'Manual Id One', ibimaId: 'iba-pilot-01' }) });
+    check('orgs: manual IBima ID used (uppercased)', r.status === 201 && r.data.organization.id === 'IBA-PILOT-01' && r.data.credentials.loginId === 'IBA-PILOT-01-ADM', JSON.stringify(r.data));
+    r = await call('POST', '/organizations', { token: master, body: orgBody({ name: 'Manual Id Two', ibimaId: 'IBA-PILOT-01' }) });
+    check('orgs: manual IBima ID taken -> 409', r.status === 409);
+    r = await fetch(`${BASE}/claims/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': INGEST_KEY }, body: JSON.stringify({ claims: ['Handler Allocation', 'Handler ILA', 'Fee Bill', 'DMS'].map((status, i) => ({ id: `SP-STAGE-${i}`, customer: 'Stage Test', status, intimationDate: '2026-10-01' })) }) });
+    check('claims ingest: Service Provider stages accepted', r.status === 201);
+
     // ---------------- Misc ----------------
     r = await fetch(`${BASE}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${master}` }, body: '{bad json' });
     check('malformed JSON -> 400', r.status === 400);

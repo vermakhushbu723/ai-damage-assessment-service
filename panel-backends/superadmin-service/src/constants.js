@@ -45,13 +45,17 @@ export const PRIORITIES = ['High', 'Medium', 'Low'];
 export const SERVICE_MODEL_STATUSES = ['Active', 'Pending', 'Suspended'];
 
 // ---------------- Claims ----------------
-export const CLAIM_STATUSES = ['Intimation', 'Survey', 'AI ILA', 'ILA', 'FLA', 'Settled', 'Rejected'];
+// SaaS claims move Intimation -> Survey -> AI ILA -> ILA -> FLA -> Settled; Service Provider
+// claims move through their own stages (Handler Allocation, Handler ILA, Fee Bill, DMS).
+export const CLAIM_STATUSES = [
+    'Intimation', 'Handler Allocation', 'Survey', 'AI ILA', 'ILA', 'Handler ILA', 'FLA', 'Fee Bill', 'DMS', 'Settled', 'Rejected',
+];
 export const REGIONS = ['North', 'East', 'West', 'South', 'Central'];
 // Grouping used by the Claim Report KPI tiles.
 export const CLAIM_GROUPS = {
-    survey: ['Intimation', 'Survey'],
-    assessment: ['AI ILA', 'ILA', 'FLA'],
-    settlement: ['Settled'],
+    survey: ['Intimation', 'Handler Allocation', 'Survey'],
+    assessment: ['AI ILA', 'ILA', 'Handler ILA', 'FLA'],
+    settlement: ['Fee Bill', 'DMS', 'Settled'],
     rejected: ['Rejected'],
 };
 

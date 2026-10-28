@@ -57,6 +57,8 @@ router.post('/', asyncHandler(async (req, res) => {
         type: { required: true, oneOf: ORG_TYPES, label: 'Organization type' },
         serviceModel: { required: true, oneOf: SERVICE_MODELS, label: 'Service model' },
         idType: { oneOf: ID_TYPES, label: 'ID type' },
+        // "Unique IBima Asist ID": auto generated (ORG-1001, ...) unless entered by hand.
+        ibimaId: { max: 30, label: 'Unique IBima Assist ID' },
         name: { required: true, min: 2, max: 150, label: 'Organization name' },
         plan: { required: true, label: 'Plan' },
         subscriptionStart: { required: true, label: 'Subscription start date' },
@@ -70,6 +72,11 @@ router.post('/', asyncHandler(async (req, res) => {
     if (!findPlan(body.plan)) throw badRequest('Selected plan does not exist.');
     if (Number.isNaN(Date.parse(body.subscriptionStart))) throw badRequest('Subscription start date is invalid.');
     if (orgNameTaken(body.name)) throw conflict(`An organization named "${body.name}" already exists.`);
+    const manualId = body.ibimaId ? String(body.ibimaId).trim().toUpperCase() : '';
+    if (manualId && !/^[A-Z0-9][A-Z0-9-]{2,29}$/.test(manualId)) {
+        throw badRequest('Unique IBima Assist ID: 3-30 letters, digits or "-" (e.g. IBA-ABC-001).');
+    }
+    if (manualId && findOrganization(manualId)) throw conflict(`IBima Assist ID ${manualId} is already in use.`);
 
     const admin = validate(body.admin, {
         name: { required: true, min: 2, label: 'Admin name' },
@@ -81,7 +88,7 @@ router.post('/', asyncHandler(async (req, res) => {
     checkPassword(password, 'Temporary password');
 
     const result = transaction(() => {
-        const id = nextSequentialId('organizations', 'ORG', 1000);
+        const id = manualId || nextSequentialId('organizations', 'ORG', 1000);
         const loginId = `${id}-${body.type === 'Surveyor' ? 'USR' : 'ADM'}`;
         if (userIdTaken(loginId)) throw conflict(`Login ID ${loginId} already exists.`);
         const organization = insertOrganization({
