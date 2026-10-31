@@ -5,6 +5,7 @@ import { hashPassword } from '../utils/password.js';
 import { sha256 } from '../utils/ids.js';
 import { transaction } from '../db/database.js';
 import { audit } from '../services/audit.js';
+import { updatePortalLogin } from '../services/adminPortal.js';
 
 // Public (no login): used by the page a "Send Link" link opens.
 const router = Router();
@@ -28,6 +29,7 @@ router.get('/:token', (req, res) => {
 router.post('/confirm', asyncHandler(async (req, res) => {
     const row = loadValidToken(req.body?.token);
     checkPassword(req.body?.password, 'New password');
+    await updatePortalLogin(row.user_id, { password: req.body.password });
     transaction(() => {
         setUserPassword(row.user_id, hashPassword(req.body.password), false);
         markResetTokenUsed(row.token_hash);

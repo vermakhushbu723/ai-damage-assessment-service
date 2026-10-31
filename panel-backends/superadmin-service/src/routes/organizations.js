@@ -11,6 +11,7 @@ import { insertUser, userIdTaken } from '../models/userModel.js';
 import { hashPassword } from '../utils/password.js';
 import { generatePassword, nextSequentialId } from '../utils/ids.js';
 import { audit } from '../services/audit.js';
+import { createPortalLogin } from '../services/adminPortal.js';
 
 const router = Router();
 router.use(authenticate);
@@ -60,17 +61,24 @@ router.post('/', asyncHandler(async (req, res) => {
         // "Unique IBima Asist ID": auto generated (ORG-1001, ...) unless entered by hand.
         ibimaId: { max: 30, label: 'Unique IBima Assist ID' },
         name: { required: true, min: 2, max: 150, label: 'Organization name' },
-        plan: { required: true, label: 'Plan' },
-        subscriptionStart: { required: true, label: 'Subscription start date' },
-        validityMonths: { required: true, type: 'number', min: 1, label: 'Validity' },
+        // SaaS organizations subscribe to a plan; Service Provider ones have none (Figma has no Plan step).
+        plan: { label: 'Plan' },
+        subscriptionStart: { label: 'Subscription start date' },
+        validityMonths: { type: 'number', min: 1, label: 'Validity' },
         workflow: { type: 'object' },
         settings: { type: 'object' },
         form: { type: 'object' },
         admin: { required: true, type: 'object', label: 'Organization admin' },
     });
     assertServiceModelAllowed(req.admin, body.serviceModel);
-    if (!findPlan(body.plan)) throw badRequest('Selected plan does not exist.');
-    if (Number.isNaN(Date.parse(body.subscriptionStart))) throw badRequest('Subscription start date is invalid.');
+    const withPlan = body.serviceModel === 'SaaS';
+    if (withPlan) {
+        if (!body.plan) throw badRequest('Plan is required.');
+        if (!body.subscriptionStart) throw badRequest('Subscription start date is required.');
+        if (!body.validityMonths) throw badRequest('Validity is required.');
+        if (!findPlan(body.plan)) throw badRequest('Selected plan does not exist.');
+        if (Number.isNaN(Date.parse(body.subscriptionStart))) throw badRequest('Subscription start date is invalid.');
+    }
     if (orgNameTaken(body.name)) throw conflict(`An organization named "${body.name}" already exists.`);
     const manualId = body.ibimaId ? String(body.ibimaId).trim().toUpperCase() : '';
     if (manualId && !/^[A-Z0-9][A-Z0-9-]{2,29}$/.test(manualId)) {
@@ -87,10 +95,17 @@ router.post('/', asyncHandler(async (req, res) => {
     const password = admin.password || generatePassword();
     checkPassword(password, 'Temporary password');
 
+    const id = manualId || nextSequentialId('organizations', 'ORG', 1000);
+    const loginId = `${id}-${body.type === 'Surveyor' ? 'USR' : 'ADM'}`;
+    if (userIdTaken(loginId)) throw conflict(`Login ID ${loginId} already exists.`);
+    const adminRole = body.type === 'Surveyor' ? 'Surveyor' : 'Admin';
+    // The login must work where the organization signs in (Admin portal / surveyor app): create it there first.
+    const portal = await createPortalLogin({
+        id: loginId, name: admin.name, email: admin.email.toLowerCase(), phone: admin.phone ? normalizePhone(admin.phone) : null, password,
+        role: adminRole, status: 'Active', organization: body.name, platform: adminRole === 'Surveyor' ? 'Mobile' : 'Web',
+    });
+
     const result = transaction(() => {
-        const id = manualId || nextSequentialId('organizations', 'ORG', 1000);
-        const loginId = `${id}-${body.type === 'Surveyor' ? 'USR' : 'ADM'}`;
-        if (userIdTaken(loginId)) throw conflict(`Login ID ${loginId} already exists.`);
         const organization = insertOrganization({
             id,
             name: body.name,
@@ -98,12 +113,12 @@ router.post('/', asyncHandler(async (req, res) => {
             status: 'Active', // a new Pilot or Working ID is live immediately
             idType: body.idType ?? 'Working',
             serviceModel: body.serviceModel,
-            plan: body.plan,
-            subscriptionStart: new Date(body.subscriptionStart).toISOString(),
-            subscriptionExpiry: addMonths(body.subscriptionStart, body.validityMonths),
+            plan: withPlan ? body.plan : null,
+            subscriptionStart: new Date(body.subscriptionStart ?? Date.now()).toISOString(),
+            subscriptionExpiry: withPlan ? addMonths(body.subscriptionStart, body.validityMonths) : null,
             adminLoginId: loginId,
             workflow: body.workflow ?? {},
-            settings: { ...(body.settings ?? {}), validityMonths: body.validityMonths },
+            settings: { ...(body.settings ?? {}), ...(withPlan ? { validityMonths: body.validityMonths } : {}) },
             form: stripSecrets(body.form),
             createdBy: req.admin.id,
         });
@@ -113,9 +128,9 @@ router.post('/', asyncHandler(async (req, res) => {
             name: admin.name,
             email: admin.email,
             phone: admin.phone ? normalizePhone(admin.phone) : null,
-            role: body.type === 'Surveyor' ? 'Surveyor' : 'Admin',
+            role: adminRole,
             branch: null,
-            platform: body.type === 'Surveyor' ? 'Mobile' : 'Web',
+            platform: adminRole === 'Surveyor' ? 'Mobile' : 'Web',
             status: 'Active',
             passwordHash: hashPassword(password),
             mustChangePassword: true,
@@ -132,6 +147,8 @@ router.post('/', asyncHandler(async (req, res) => {
             email: admin.email,
             password,
             validTill: result.organization.subscriptionExpiry,
+            // Where the login works: "Admin Portal" / a user account in admin-service; null = admin-service not connected.
+            portal: portal ? (portal.kind === 'admin' ? 'Admin Portal' : 'Surveyor App') : null,
         },
     });
 }));

@@ -26,6 +26,9 @@ const server = spawn(process.execPath, ['src/server.js'], {
         BOOTSTRAP_SP_EMAIL: 'sp@test.in', BOOTSTRAP_SP_PASSWORD: PW.sp,
         RESET_LINK_BASE: 'http://localhost/reset-password',
         CLAIMS_INGEST_KEY: 'test-ingest-key',
+        // The mock below plays admin-service (/api/v1/internal/accounts).
+        ADMIN_SERVICE_URL: 'http://127.0.0.1:8042',
+        ADMIN_SERVICE_KEY: 'admin-key',
         APP_VERSION: 'v2.4.1',
         LATEST_VERSION: 'v2.4.2',
     },
@@ -38,8 +41,23 @@ server.stderr.on('data', (d) => { serverLog += d; });
 const INGEST_KEY = 'test-ingest-key';
 // Stand-in for an external API, used by the integration "Test" checks.
 let lastMockAuth = null;
+// admin-service accounts the console created / changed: { method, path, key, body }.
+const portalCalls = [];
 const mock = http.createServer((req, res) => {
     lastMockAuth = req.headers.authorization ?? null;
+    if (req.url.startsWith('/api/v1/internal/accounts')) {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        return req.on('end', () => {
+            const body = JSON.parse(raw || '{}');
+            portalCalls.push({ method: req.method, path: req.url, key: req.headers['x-service-key'], body });
+            res.setHeader('Content-Type', 'application/json');
+            if (body.email === 'taken@portal.in') { res.statusCode = 409; return res.end(JSON.stringify({ detail: 'An Admin portal login with taken@portal.in already exists.' })); }
+            if (req.method === 'PATCH' && req.url.endsWith('/OLD-1')) { res.statusCode = 404; return res.end(JSON.stringify({ detail: 'Account not found.' })); }
+            res.statusCode = req.method === 'POST' ? 201 : 200;
+            return res.end(JSON.stringify({ kind: body.kind ?? 'user', id: body.id, role: 'Claim Handler' }));
+        });
+    }
     if (req.url === '/slow') return setTimeout(() => res.end('ok'), 2300);
     if (req.url === '/boom') { res.statusCode = 500; return res.end('err'); }
     return res.end('ok');
@@ -483,6 +501,27 @@ try {
     check('orgs: manual IBima ID taken -> 409', r.status === 409);
     r = await fetch(`${BASE}/claims/ingest`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': INGEST_KEY }, body: JSON.stringify({ claims: ['Handler Allocation', 'Handler ILA', 'Fee Bill', 'DMS'].map((status, i) => ({ id: `SP-STAGE-${i}`, customer: 'Stage Test', status, intimationDate: '2026-10-01' })) }) });
     check('claims ingest: Service Provider stages accepted', r.status === 201);
+
+    // ---------------- Login IDs reach admin-service; Service Provider orgs need no plan ----------------
+    portalCalls.length = 0;
+    r = await call('POST', '/organizations', { token: sp, body: orgBody({ name: 'SP No Plan Insurer', serviceModel: 'Service Provider', plan: undefined, subscriptionStart: undefined, validityMonths: undefined, admin: { name: 'Sana Iyer', email: 'sana@spni.in', password: 'Sana@12345' } }) });
+    check('orgs: Service Provider org without a plan -> 201', r.status === 201 && r.data.organization.plan === null && r.data.organization.subscriptionExpiry === null, JSON.stringify(r.data));
+    const spAdminLogin = r.data.credentials?.loginId;
+    check('orgs: admin login created in admin-service (Admin Portal)', r.data.credentials?.portal === 'Admin Portal' && portalCalls.length === 1 && portalCalls[0].key === 'admin-key'
+        && portalCalls[0].body.kind === 'admin' && portalCalls[0].body.id === spAdminLogin && portalCalls[0].body.password === 'Sana@12345', JSON.stringify(portalCalls));
+    r = await call('POST', '/organizations', { token: master, body: orgBody({ name: 'SaaS Needs Plan', plan: undefined }) });
+    check('orgs: SaaS org still needs a plan -> 400', r.status === 400);
+    r = await call('POST', '/organizations', { token: sp, body: orgBody({ name: 'Portal Taken', serviceModel: 'Service Provider', plan: undefined, admin: { name: 'Tara Das', email: 'taken@portal.in' } }) });
+    check('orgs: admin-service refuses the login -> 409, org not created', r.status === 409 && !(await call('GET', '/organizations', { token: sp })).data.some((o) => o.name === 'Portal Taken'), JSON.stringify(r.data));
+    const spOrgId = (await call('GET', '/organizations', { token: sp })).data.find((o) => o.name === 'SP No Plan Insurer').id;
+    portalCalls.length = 0;
+    r = await call('POST', '/users', { token: sp, body: { organizationId: spOrgId, name: 'Hari Handler', email: 'hari@spni.in', phone: '9876500011', role: 'Claim Handler', password: 'Hari@12345' } });
+    const handlerLogin = r.data.credentials?.loginId;
+    check('users: login created in admin-service with its role', r.status === 201 && portalCalls[0]?.body.kind === 'user' && portalCalls[0].body.roleKey === 'claim-handler' && portalCalls[0].body.id === handlerLogin, JSON.stringify(portalCalls));
+    portalCalls.length = 0;
+    await call('PATCH', `/users/${handlerLogin}`, { token: sp, body: { status: 'Suspended' } });
+    await call('POST', `/users/${handlerLogin}/reset-password`, { token: sp, body: { password: 'Hari@54321', reason: 'forgot' } });
+    check('users: suspend + manual reset reach admin-service', portalCalls.length === 2 && portalCalls[0].method === 'PATCH' && portalCalls[0].body.status === 'Suspended' && portalCalls[1].body.password === 'Hari@54321', JSON.stringify(portalCalls));
 
     // ---------------- Misc ----------------
     r = await fetch(`${BASE}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${master}` }, body: '{bad json' });

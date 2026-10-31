@@ -1,16 +1,20 @@
 import { Router } from 'express';
 import { settings } from '../config.js';
-import { asyncHandler, badRequest, notFound, HttpError, checkPassword } from '../utils/http.js';
+import { asyncHandler, badRequest, notFound, HttpError, checkPassword, conflict, normalizePhone, validate } from '../utils/http.js';
 import { hasServiceKey } from '../middleware/authenticate.js';
 import { PERMISSION_MODULES } from '../constants.js';
 import {
     findUser, findUserRowByLogin, findUserRow, listUsersByRole, recordUserLoginSuccess, recordUserLoginFailure, setUserPassword,
+    insertUser, setUserStatus,
 } from '../models/userModel.js';
 import { findRole } from '../models/roleModel.js';
 import { findRecord, listRecords } from '../models/recordModel.js';
 import { findClaim } from '../models/claimModel.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 import { auditEvent } from '../services/audit.js';
+import { insertAdmin, findAdminRowById, adminEmailTaken, setAdminStatus, setAdminPassword } from '../models/adminModel.js';
+import { nextSequentialId } from '../utils/ids.js';
+import { db, transaction } from '../db/database.js';
 
 // Server-to-server API for the other panel backends (today: callcenter-service,
 // the backend of car-damage-insurance-callcenter). Users are created here in
@@ -211,6 +215,93 @@ router.get('/claims/:id', (req, res) => {
     if (!claim) throw notFound('Claim');
     const triggers = listRecords('triggers').filter((t) => t.claim === claim.id);
     res.json({ claim, triggers });
+});
+
+// ---------- accounts created by the Super Admin (superadmin-service) ----------
+
+const ACCOUNT_STATUSES = ['Active', 'Inactive', 'Pending', 'Suspended', 'On Leave', 'Resigned'];
+
+/**
+ * POST /api/v1/internal/accounts -- a login ID issued in the Super Admin console.
+ * { kind: "admin", id, name, email, mobile?, password }         -> Admin portal sign-in (login with id, email or mobile)
+ * { kind: "user", id, name, email, mobile?, roleKey, password,  -> Create Users account (call center portal / apps,
+ *   status?, organization?, branch?, platform? }                    login with id or email), first login changes the password
+ */
+router.post('/accounts', asyncHandler(async (req, res) => {
+    const body = validate(req.body, {
+        kind: { required: true, oneOf: ['admin', 'user'], label: 'kind' },
+        id: { required: true, max: 40, label: 'Login ID' },
+        name: { required: true, min: 2, max: 100, label: 'Name' },
+        email: { required: true, email: true, label: 'Email' },
+        mobile: { phone: true, label: 'Mobile number' },
+        password: { required: true, label: 'Password' },
+        roleKey: { label: 'Role' },
+        status: { oneOf: ACCOUNT_STATUSES, label: 'Status' },
+        organization: { max: 150, label: 'Organization' },
+        branch: { max: 80, label: 'Branch' },
+        platform: { oneOf: ['Web', 'Mobile', 'Both'], label: 'Platform' },
+    });
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{2,39}$/.test(body.id)) throw badRequest('Login ID is invalid.');
+    checkPassword(body.password, 'Password');
+    const email = body.email.toLowerCase();
+    const mobile = body.mobile ? normalizePhone(body.mobile) : null;
+    const loginTaken = db.prepare('SELECT 1 FROM admins WHERE lower(id) = lower(?) UNION SELECT 1 FROM users WHERE lower(user_id) = lower(?) OR lower(employee_id) = lower(?)')
+        .get(body.id, body.id, body.id);
+    if (loginTaken) throw conflict(`Login ID ${body.id} already exists in the Admin portal.`);
+
+    if (body.kind === 'admin') {
+        if (adminEmailTaken(email)) throw conflict(`An Admin portal login with ${email} already exists.`);
+        const admin = insertAdmin({ id: body.id, name: body.name, email, mobile, passwordHash: hashPassword(body.password) });
+        auditEvent(req, { update: `Admin login ${admin.id} created from the Super Admin console`, reference: 'Created', module: 'Users', actor: { name: 'Super Admin' } });
+        return res.status(201).json({ kind: 'admin', id: admin.id, portal: 'Admin Portal' });
+    }
+
+    const role = findRole(body.roleKey);
+    if (!role) throw badRequest(`Role "${body.roleKey}" does not exist in the Admin portal.`);
+    if (db.prepare('SELECT 1 FROM users WHERE lower(email) = lower(?)').get(email)) throw conflict(`A user with ${email} already exists in the Admin portal.`);
+    const user = transaction(() => insertUser({
+        id: nextSequentialId('users', 'USR', 1000),
+        userId: body.id,
+        employeeId: body.id,
+        name: body.name,
+        email,
+        contact: mobile,
+        roleKey: role.key,
+        roleKeys: [role.key],
+        status: body.status ?? 'Active',
+        organization: body.organization ?? null,
+        accountType: 'External',
+        platform: body.platform ?? 'Both',
+        branch: body.branch ?? null,
+        createdFrom: 'Super Admin',
+        extra: {},
+        zones: [],
+    }, { passwordHash: hashPassword(body.password), createdBy: 'superadmin' }));
+    auditEvent(req, { update: `User ${body.id} (${role.name}) created from the Super Admin console`, reference: 'Created', module: 'Users', actor: { name: 'Super Admin' } });
+    res.status(201).json({ kind: 'user', id: body.id, userId: user.id, role: role.name });
+}));
+
+/**
+ * PATCH /api/v1/internal/accounts/:id { status?, password? } -- User Activation / suspend and
+ * password resets done in the Super Admin console.
+ */
+router.patch('/accounts/:id', (req, res) => {
+    const { status, password } = validate(req.body, {
+        status: { oneOf: ACCOUNT_STATUSES, label: 'Status' },
+        password: { label: 'Password' },
+    });
+    if (!status && !password) throw badRequest('Send status and/or password.');
+    if (password) checkPassword(password, 'Password');
+    if (findAdminRowById(req.params.id)) {
+        if (status) setAdminStatus(req.params.id, status === 'Active' ? 'Active' : 'Suspended');
+        if (password) setAdminPassword(req.params.id, hashPassword(password));
+        return res.json({ kind: 'admin', id: req.params.id });
+    }
+    const row = db.prepare('SELECT id FROM users WHERE lower(user_id) = lower(?)').get(req.params.id);
+    if (!row) throw notFound('Account');
+    if (status) setUserStatus([row.id], status);
+    if (password) setUserPassword(row.id, hashPassword(password), { mustChange: true });
+    res.json({ kind: 'user', id: req.params.id });
 });
 
 export default router;

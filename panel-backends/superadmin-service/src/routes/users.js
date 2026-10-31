@@ -11,6 +11,7 @@ import { findOrganization } from '../models/organizationModel.js';
 import { hashPassword } from '../utils/password.js';
 import { generatePassword, nextSequentialId, randomToken, sha256 } from '../utils/ids.js';
 import { audit } from '../services/audit.js';
+import { createPortalLogin, updatePortalLogin } from '../services/adminPortal.js';
 
 const router = Router();
 router.use(authenticate);
@@ -94,8 +95,14 @@ router.post('/', asyncHandler(async (req, res) => {
     const org = loadOwnOrganization(req, body.organizationId);
     const password = body.password || generatePassword();
     checkPassword(password);
+    const id = nextSequentialId('users', 'USR', 1000);
+    // The login ID must work where the user signs in (Admin portal, call center portal, apps).
+    const portal = await createPortalLogin({
+        id, name: body.name, email: body.email.toLowerCase(), phone: normalizePhone(body.phone), password, role: body.role,
+        status: body.status ?? 'Active', organization: org.name, branch: body.branch, platform: body.platform ?? 'Both',
+    });
     const user = insertUser({
-        id: nextSequentialId('users', 'USR', 1000),
+        id,
         organizationId: org.id,
         name: body.name,
         email: body.email.toLowerCase(),
@@ -108,7 +115,7 @@ router.post('/', asyncHandler(async (req, res) => {
         mustChangePassword: true,
     });
     audit(req, { action: 'Created', module: 'Users', detail: `${user.id} ${user.name} (${org.name})` });
-    res.status(201).json({ user, credentials: { loginId: user.id, password } });
+    res.status(201).json({ user, credentials: { loginId: user.id, password, portal: portal ? (portal.kind === 'admin' ? 'Admin Portal' : portal.role) : null } });
 }));
 
 /** PATCH /api/v1/users/:id -- inline Role / Status edits, User Activation. */
@@ -127,6 +134,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     if (patch.organizationId) loadOwnOrganization(req, patch.organizationId);
     if (patch.phone) patch.phone = normalizePhone(patch.phone);
     if (patch.email) patch.email = patch.email.toLowerCase();
+    if (patch.status && patch.status !== user.status) await updatePortalLogin(user.id, { status: patch.status });
     const updated = updateUser(user.id, patch);
     audit(req, { action: 'Updated', module: 'Users', detail: `${user.id}: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(', ')}` });
     res.json(updated);
@@ -155,6 +163,7 @@ router.post('/:id/reset-password', asyncHandler(async (req, res) => {
         reason: { required: true, min: 3, max: 300, label: 'Reason' },
     });
     checkPassword(password, 'New password');
+    await updatePortalLogin(user.id, { password });
     setUserPassword(user.id, hashPassword(password), true);
     audit(req, { action: 'Updated', module: 'Users', detail: `Manual password reset for ${user.id}. Reason: ${reason}` });
     res.json({ ok: true, userId: user.id, mustChangePassword: true });

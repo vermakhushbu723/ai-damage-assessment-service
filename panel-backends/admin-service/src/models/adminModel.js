@@ -10,12 +10,19 @@ export const toAdminDto = (r) => (r ? {
 export const findAdminRowById = (id) => db.prepare('SELECT * FROM admins WHERE id = ?').get(id);
 export const findAdminById = (id) => toAdminDto(findAdminRowById(id));
 
-/** Email (any case) or 10-digit mobile number. */
+/** Email (any case), 10-digit mobile number, or the Login ID (e.g. ORG-1001-ADM issued by the Super Admin). */
 export function findAdminRowByIdentifier(identifier) {
     const id = String(identifier ?? '').trim();
     if (id.includes('@')) return db.prepare('SELECT * FROM admins WHERE lower(email) = lower(?)').get(id);
     const phone = normalizePhone(id);
-    return phone ? db.prepare('SELECT * FROM admins WHERE mobile = ?').get(phone) : undefined;
+    if (phone) return db.prepare('SELECT * FROM admins WHERE mobile = ?').get(phone);
+    return id ? db.prepare('SELECT * FROM admins WHERE lower(id) = lower(?)').get(id) : undefined;
+}
+
+export const adminEmailTaken = (email) => Boolean(db.prepare('SELECT 1 FROM admins WHERE lower(email) = lower(?)').get(email));
+
+export function setAdminStatus(id, status) {
+    return db.prepare('UPDATE admins SET status = ?, updated_at = ? WHERE id = ?').run(status, nowIso(), id).changes;
 }
 
 export const countAdmins = () => db.prepare('SELECT COUNT(*) AS n FROM admins').get().n;

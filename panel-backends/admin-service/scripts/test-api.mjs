@@ -281,6 +281,7 @@ try {
     check('ingest keeps claim.sp, cleaned', r.status === 200 && spClaim.sp?.stage === 'Handler ILA' && spClaim.sp.linkSent === true && spClaim.sp.docsPending === 2
         && spClaim.sp.docsReceived === 0 && spClaim.sp.handlerIla === 'Pending' && spClaim.sp.feeBill === 'Pending' && !('extra' in spClaim.sp), spClaim.sp);
     check('ingest rejects a non-object sp', (await post('/claims/ingest', { claims: [{ id: 'CLM-1001', sp: 'x' }] })).status === 400);
+
     r = await get('/claims');
     const c1000 = r.data.find((c) => c.id === 'CLM-1000');
     check('claims list resolves handler + branch names', r.data.length === 6 && c1000.handler === 'Ajay Sharma' && c1000.branch === 'Mumbai HO' && c1000.stage === 'FLA' && c1000.customer === 'Customer 0', c1000);
@@ -673,6 +674,25 @@ try {
     for (let i = 0; i < 5; i++) last = await post('/auth/login', { identifier: 'admin@test.in', password: 'bad' }, { token: null });
     check('5 wrong passwords lock the account', /locked/i.test(last.data?.detail), last.data);
     check('locked account -> 423', (await post('/auth/login', { identifier: 'admin@test.in', password: 'Another@123' }, { token: null })).status === 423);
+    // ---------- login IDs issued by the Super Admin console (internal accounts API) ----------
+    const svc = { token: null, headers: { 'X-Service-Key': INGEST_KEY } };
+    check('accounts API needs the service key', (await post('/internal/accounts', { kind: 'admin' }, { token: null })).status === 401);
+    r = await post('/internal/accounts', { kind: 'admin', id: 'ORG-1001-ADM', name: 'Sana Iyer', email: 'Sana@SPNI.in', password: 'Sana@12345' }, svc);
+    check('accounts: org admin created', r.status === 201 && r.data.kind === 'admin', r.data);
+    r = await post('/auth/login', { identifier: 'org-1001-adm', password: 'Sana@12345' }, { token: null });
+    check('Admin portal login with the Super Admin Login ID', r.status === 200 && !!r.data.token, r.data);
+    check('Admin portal login with its email too', (await post('/auth/login', { identifier: 'sana@spni.in', password: 'Sana@12345' }, { token: null })).status === 200);
+    check('accounts: same Login ID twice -> 409', (await post('/internal/accounts', { kind: 'admin', id: 'ORG-1001-ADM', name: 'X Y', email: 'x@y.in', password: 'Xy@123456' }, svc)).status === 409);
+    r = await post('/internal/accounts', { kind: 'user', id: 'USR-5001', name: 'Hari Handler', email: 'hari@spni.in', mobile: '9876500011', roleKey: 'claim-handler', password: 'Hari@12345', organization: 'SP Insurer' }, svc);
+    check('accounts: user created with its role', r.status === 201 && r.data.role === 'Claim Handler', r.data);
+    r = await post('/internal/portal-login', { identifier: 'USR-5001', password: 'Hari@12345', portal: 'callcenter' }, svc);
+    check('call center portal login with the Super Admin Login ID', r.status === 200 && r.data.user?.roleKey === 'claim-handler', r.data);
+    check('accounts: unknown role -> 400', (await post('/internal/accounts', { kind: 'user', id: 'USR-5002', name: 'No Role', email: 'nr@spni.in', roleKey: 'nope', password: 'Nr@1234567' }, svc)).status === 400);
+    await patch('/internal/accounts/ORG-1001-ADM', { status: 'Suspended' }, svc);
+    check('accounts: suspended admin cannot sign in', (await post('/auth/login', { identifier: 'ORG-1001-ADM', password: 'Sana@12345' }, { token: null })).status === 403);
+    await patch('/internal/accounts/USR-5001', { password: 'Hari@54321' }, svc);
+    check('accounts: password reset from the Super Admin works', (await post('/internal/portal-login', { identifier: 'USR-5001', password: 'Hari@54321', portal: 'callcenter' }, svc)).status === 200);
+    check('accounts: unknown account -> 404', (await patch('/internal/accounts/NOPE-1', { status: 'Active' }, svc)).status === 404);
 } catch (err) {
     fail++;
     console.error('ERROR', err);
