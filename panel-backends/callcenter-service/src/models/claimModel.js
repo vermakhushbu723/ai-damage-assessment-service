@@ -145,6 +145,8 @@ export function toListItem(row) {
         mobile: row.mobile,
         vehicleNo: row.vehicle_no,
         policyNo: row.policy_no,
+        insurerName: i.insurerName ?? null,
+        lossDate: i.dateOfIncident ?? null,
         location: [row.city, row.state].filter(Boolean).join(', '),
         handlerId: row.handler_id,
         handlerName: row.handler_name,

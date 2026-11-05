@@ -54,6 +54,34 @@ function tatLeft(submittedAt) {
     return left >= 0 ? fmt(left) : `Overdue ${fmt(-left)}`;
 }
 
+/** Quick Filters popup: priority, source, date range, location (city), insurer. */
+function addQuickFilters(query, where, params) {
+    if (PRIORITIES.includes(query.priority)) {
+        where.push('priority = ?');
+        params.push(query.priority);
+    }
+    if (SOURCES.includes(query.source)) {
+        where.push('source = ?');
+        params.push(query.source);
+    }
+    if (isDay(query.from)) {
+        where.push('submitted_at >= ?');
+        params.push(new Date(`${query.from}T00:00:00+05:30`).toISOString());
+    }
+    if (isDay(query.to)) {
+        where.push('submitted_at < ?');
+        params.push(new Date(new Date(`${query.to}T00:00:00+05:30`).getTime() + 86400_000).toISOString());
+    }
+    if (query.location) {
+        where.push('city = ?');
+        params.push(String(query.location));
+    }
+    if (query.insurer) {
+        where.push("json_extract(intimation, '$.insurerName') = ?");
+        params.push(String(query.insurer));
+    }
+}
+
 /**
  * GET /api/v1/dashboard?range=24h|7d|30d&all=1&priority=&source=&page=&allocationPage=
  * KPI tiles + "New Intimations" + "Pending Allocation".
@@ -90,31 +118,7 @@ router.get('/dashboard', can(MODULES.dashboard), (req, res) => {
         filters.push('submitted_at >= ?');
         params.push(from);
     }
-    if (PRIORITIES.includes(req.query.priority)) {
-        filters.push('priority = ?');
-        params.push(req.query.priority);
-    }
-    if (SOURCES.includes(req.query.source)) {
-        filters.push('source = ?');
-        params.push(req.query.source);
-    }
-    // Quick Filters: date range, location (city), insurer.
-    if (isDay(req.query.from)) {
-        filters.push('submitted_at >= ?');
-        params.push(new Date(`${req.query.from}T00:00:00+05:30`).toISOString());
-    }
-    if (isDay(req.query.to)) {
-        filters.push('submitted_at < ?');
-        params.push(new Date(new Date(`${req.query.to}T00:00:00+05:30`).getTime() + 86400_000).toISOString());
-    }
-    if (req.query.location) {
-        filters.push('city = ?');
-        params.push(String(req.query.location));
-    }
-    if (req.query.insurer) {
-        filters.push("json_extract(intimation, '$.insurerName') = ?");
-        params.push(String(req.query.insurer));
-    }
+    addQuickFilters(req.query, filters, params);
     const where = filters.length ? `AND ${filters.join(' AND ')}` : '';
     const drafts = allowed(req.user, MODULES.intimation, 'view')
         ? db.prepare("SELECT * FROM claims WHERE status = 'Draft' AND created_by = ? ORDER BY updated_at DESC").all(req.user.id)
@@ -222,7 +226,7 @@ const CLAIM_VIEWS = {
     link: () => ["json_extract(link, '$.sentAt') IS NOT NULL", []],
 };
 
-/** GET /api/v1/claims?view=total|new|pending|link&search=&stage=&status=&mine=1&page=&pageSize= -- My Claims lists, claim pickers. */
+/** GET /api/v1/claims?view=total|new|pending|link&search=&stage=a,b&status=&mine=1&assigned=1&priority=&source=&from=&to=&location=&insurer=&page=&pageSize= -- My Claims lists, claim pickers. */
 router.get('/claims', (req, res) => {
     const where = ["(status <> 'Draft' OR created_by = ?)"];
     const params = [req.user.id];
@@ -231,9 +235,10 @@ router.get('/claims', (req, res) => {
         where.push('(lower(id) LIKE ? OR lower(claim_no) LIKE ? OR lower(insured_name) LIKE ? OR lower(vehicle_no) LIKE ? OR mobile LIKE ? OR lower(policy_no) LIKE ?)');
         params.push(...Array(6).fill(`%${q}%`));
     }
-    if ([...STAGE_KEYS, COMPLETED].includes(req.query.stage)) {
-        where.push('stage = ?');
-        params.push(req.query.stage);
+    const stages = String(req.query.stage ?? '').split(',').filter((s) => [...STAGE_KEYS, COMPLETED].includes(s));
+    if (stages.length) {
+        where.push(`stage IN (${stages.map(() => '?').join(',')})`);
+        params.push(...stages);
     }
     if (['Draft', 'Open', 'Closed'].includes(req.query.status)) {
         where.push('status = ?');
@@ -249,6 +254,12 @@ router.get('/claims', (req, res) => {
         where.push('(handler_id = ? OR (submitted_at >= ? AND status = ?))');
         params.push(req.user.id, new Date(Date.now() - 86400_000).toISOString(), 'Open');
     }
+    // Claim Handler dashboard: only the claims allocated to me.
+    if (req.query.assigned === '1') {
+        where.push('handler_id = ?');
+        params.push(req.user.id);
+    }
+    addQuickFilters(req.query, where, params);
     const rows = db.prepare(`SELECT * FROM claims WHERE ${where.join(' AND ')} ORDER BY COALESCE(submitted_at, created_at) DESC`).all(...params);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     res.json(pageOf(rows.map(toListItem), Number(req.query.page) || 1, pageSize));

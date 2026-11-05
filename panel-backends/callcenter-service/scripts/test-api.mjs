@@ -237,6 +237,16 @@ try {
     check('My Claims: Total / New Intimations list the claim', (await inView('total')).includes(claimId) && (await inView('new')).includes(claimId));
     check('My Claims: Link Sent lists it with the send time', (await inView('link')).includes(claimId) && !!(await AG2.get('/claims?view=link')).data.rows[0].linkSentAt);
     check('My Claims: allocated claim is not in Pending Allocation', !(await inView('pending')).includes(claimId));
+    // Claim Handler dashboard list.
+    const assignedTo = async (agent) => (await agent.get('/claims?assigned=1')).data.rows.map((x) => x.id);
+    const meId = (await H.get('/auth/me')).data.user.id;
+    check('assigned=1: not the handler -> claim not listed', !(await assignedTo(AG2)).includes(claimId));
+    check('assigned=1: first handler matches', (await assignedTo(H)).includes(claimId) === (meId === firstHandler));
+    const listed = (await AG2.get(`/claims?search=${encodeURIComponent(claimId)}`)).data.rows[0];
+    check('claim list has insurer + loss date keys', listed && 'insurerName' in listed && 'lossDate' in listed, listed);
+    check('claims: quick filter by priority', (await AG2.get('/claims?priority=High')).data.total === 0);
+    check('claims: quick filter by insurer', (await AG2.get('/claims?insurer=No%20Such%20Insurer')).data.total === 0);
+    check('claims: several stages', (await AG2.get('/claims?stage=intimation,surveyor-assignment,claim-details,handler-allocation,ai-ila')).data.rows.some((x) => x.id === claimId));
     r = await H.get(`/claims/${claimId}`);
     check('claim header for the handler (fraud from Admin)', r.status === 200 && r.data.fraud.available === true && r.data.claimType === 'Motor OD' && r.data.tat.text.startsWith('0D'), r.data);
 
@@ -250,6 +260,8 @@ try {
     check('reassign needs a reason', (await H.post(`/claims/${claimId}/handler`, { handlerId: other.id })).status === 400);
     r = await H.post(`/claims/${claimId}/handler`, { handlerId: other.id, reason: 'workload', remark: 'supervisor' });
     check('reassign claim', r.status === 200 && r.data.handlerId === other.id, r.data);
+    check('assigned=1 follows the reassignment', (await assignedTo(H)).includes(claimId) === (meId === other.id));
+    check('one of the two handlers was the signed-in handler (positive case ran)', meId === firstHandler || meId === other.id);
     check('Admin portal sees the new handler', (await A.get(`/claims/${claimNo}`)).data.handlerId === other.id);
     check('same handler again -> 409', (await H.post(`/claims/${claimId}/handler`, { handlerId: other.id, reason: 'workload' })).status === 409);
 
