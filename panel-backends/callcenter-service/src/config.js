@@ -54,4 +54,7 @@ export const settings = {
 
     // Claim TAT shown in the claim header (SLA Risk after this many hours open).
     slaHours: Number(process.env.SLA_HOURS || 48),
+    // Approver dashboard: "SLA Risk" = open claims with at most this many hours left; "High Value" = amount at or above this.
+    slaRiskHours: Number(process.env.SLA_RISK_HOURS || 4),
+    highValueAmount: Number(process.env.HIGH_VALUE_AMOUNT || 200000),
 };

@@ -10,6 +10,7 @@ import settlementRouter from './routes/settlement.js';
 import communicationRouter from './routes/communication.js';
 import publicRouter from './routes/public.js';
 import surveyRouter from './routes/survey.js';
+import approverRouter from './routes/approver.js';
 import { pendingCount } from './services/sync.js';
 import { aiConfigured } from './services/aiClient.js';
 import { gatewayConfigured } from './services/notifier.js';
@@ -48,6 +49,7 @@ api.use(documentsRouter); // /claims/:id/documents
 api.use(ilaRouter); // /claims/:id/ai-ila
 api.use(settlementRouter); // /claims/:id/liability, /payment, /paybill
 api.use(communicationRouter); // /claims/:id/letters, /communications
+api.use(approverRouter); // /approver/dashboard, /approver/claims/:id/decision
 
 api.use((_req, res) => res.status(404).json({ detail: 'Not found.' }));
 app.use('/api/v1', api);

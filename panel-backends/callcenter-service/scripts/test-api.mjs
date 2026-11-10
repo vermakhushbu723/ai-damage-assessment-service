@@ -399,6 +399,57 @@ try {
     r = await H.post(`/claims/${claimId}/payment/submit`, { details: r.data.details, payees: [{ ...payee, amount: net }] });
     check('submit for approval', r.status === 200 && r.data.status === 'Pending Approval' && r.data.approval.status === 'Pending For Approval From Next Level', r.data);
 
+    // ---------- SCM / RCM & Approver dashboard ----------
+    await mk({ roleKey: 'regional-manager', name: 'Nisha Rao', userId: 'nisha.rcm', email: 'nisha@test.in', employeeId: 'RM-1001', contact: '9811000011', city: 'Lucknow', state: 'Uttar Pradesh' });
+    await mk({ roleKey: 'state-manager', name: 'Om Patil', userId: 'om.sm', email: 'om@test.in', employeeId: 'SM-2001', contact: '9811000012', city: 'Pune', state: 'Maharashtra' });
+    const signIn = async (id) => api(CC, (await pub.post('/auth/login', { identifier: id, password: 'Temp@1234' })).data.token);
+    const SM = await signIn('vikram.sm');
+    const RM = await signIn('nisha.rcm');
+    const SM2 = await signIn('om.sm');
+    check('approver dashboard: claim handler -> 403', (await H.get('/approver/dashboard')).status === 403);
+    check('approver dashboard: call center agent -> 403', (await AG2.get('/approver/dashboard')).status === 403);
+    let d = (await SM.get('/approver/dashboard')).data;
+    const authOf = (dash, kind) => dash.authorization.rows.find((x) => x.claimId === claimId && x.kind === kind);
+    check('SCM: scope is their state', d.scope === 'Uttar Pradesh', d.scope);
+    check('SCM: ILA + FLA waiting for authorization', !!authOf(d, 'liability') && authOf(d, 'fla')?.type === 'FLA' && authOf(d, 'liability').assignedTo === (await H.get(`/claims/${claimId}`)).data.handlerName && !!authOf(d, 'liability').since, d.authorization);
+    check('SCM: ILA/FLA queue KPI counts them', d.kpis.ilaFlaQueue.value >= 2 && /^[+-]?\d+$/.test(d.kpis.ilaFlaQueue.trend.value), d.kpis.ilaFlaQueue);
+    let pay = d.payments.rows.find((x) => x.claimId === claimId);
+    check('SCM: payment pending approval shows as Processing, no ETA yet', pay?.status === 'Processing' && pay.amount === net && pay.beneficiary === 'ABC Motors' && pay.eta === null, pay);
+    check('SCM: payment queue KPI = ready for disbursement (none yet)', d.kpis.paymentQueue.value === 0);
+    check('SCM: fraud list from the Admin portal', d.fraud.available === true && Array.isArray(d.fraud.rows) && typeof d.kpis.fraudTriggered.value === 'number', d.fraud);
+    check('SCM: high value KPI = open claims at or above the threshold', d.kpis.highValue.value === 0 || d.kpis.highValue.value >= d.settings.highValueAmount, d.kpis.highValue);
+    const north = d.sla.regions.find((x) => x.region === 'North');
+    check('SCM: SLA risk monitor by region', north && north.pending >= 1 && north.slaRemainingHours <= d.settings.slaHours && d.sla.regions.every((x) => typeof x.avgTatHours === 'number'), d.sla.regions);
+    check('SCM: insurer share of open claims', d.sla.insurers.some((x) => x.name === 'Demo Insurance Co') && d.sla.insurers.reduce((s, x) => s + x.pct, 0) <= 101, d.sla.insurers);
+    check('SCM: quick filter by insurer narrows everything', (await SM.get('/approver/dashboard?insurer=No%20Such%20Insurer')).data.authorization.total === 0);
+    check('RCM: region scope sees the same claim', (await RM.get('/approver/dashboard')).data.scope === 'North Region' && !!authOf((await RM.get('/approver/dashboard')).data, 'fla'));
+    d = (await SM2.get('/approver/dashboard')).data;
+    check('SCM of another state: nothing of this claim', d.scope === 'Maharashtra' && !authOf(d, 'liability') && !d.payments.rows.some((x) => x.claimId === claimId));
+    const decide = (who, body) => who.post(`/approver/claims/${claimId}/decision`, body);
+    check('decision: other-state SCM -> 404', (await decide(SM2, { kind: 'liability', decision: 'approve' })).status === 404);
+    check('decision: claim handler -> 403', (await decide(H, { kind: 'liability', decision: 'approve' })).status === 403);
+    check('decision: bad kind -> 400', (await decide(SM, { kind: 'x', decision: 'approve' })).status === 400);
+    check('decision: reject needs a reason -> 400', (await decide(SM, { kind: 'liability', decision: 'reject' })).status === 400);
+    r = await decide(SM, { kind: 'liability', decision: 'approve', remark: 'OK' });
+    check('SCM authorizes the ILA', r.status === 200 && r.data.authorization?.status === 'Approved', r.data);
+    check('authorized ILA leaves the queue', !authOf((await SM.get('/approver/dashboard')).data, 'liability'));
+    check('authorizing twice -> 409', (await decide(SM, { kind: 'liability', decision: 'approve' })).status === 409);
+    r = await decide(SM, { kind: 'fla', decision: 'reject', remark: 'Recheck bumper price' });
+    check('SCM sends the FLA back -> Draft, editable again', r.status === 200 && r.data.status === 'Draft' && (await H.get(`/claims/${claimId}/fla`)).data.status === 'Draft', r.data);
+    check('sent-back FLA is out of the queue', !authOf((await SM.get('/approver/dashboard')).data, 'fla'));
+    r = await H.post(`/claims/${claimId}/fla/submit`);
+    check('handler re-submits the FLA -> back in the queue', r.status === 200 && !!authOf((await SM.get('/approver/dashboard')).data, 'fla'));
+    check('RCM authorizes the FLA', (await decide(RM, { kind: 'fla', decision: 'approve' })).data.authorization?.status === 'Approved');
+    check('payment: transfer before approval -> 409', (await decide(SM, { kind: 'payment', decision: 'transfer' })).status === 409);
+    r = await decide(SM, { kind: 'payment', decision: 'approve', remark: 'Approved' });
+    check('SCM approves the payment', r.status === 200 && r.data.status === 'Approved', r.data);
+    d = (await SM.get('/approver/dashboard')).data;
+    pay = d.payments.rows.find((x) => x.claimId === claimId);
+    check('approved payment: Ready, approval time + ETA, counted ready', pay?.status === 'Ready' && !!pay.approvedAt && Date.parse(pay.eta) > Date.parse(pay.approvedAt) && d.kpis.paymentQueue.value === 1, pay);
+    check('payment: transfer initiated -> Awaiting Transfer', (await decide(SM, { kind: 'payment', decision: 'transfer' })).data.status === 'Transfer Initiated' && (await SM.get('/approver/dashboard')).data.payments.rows.find((x) => x.claimId === claimId)?.status === 'Awaiting Transfer');
+    check('payment: paid -> leaves the queue', (await decide(SM, { kind: 'payment', decision: 'paid' })).data.status === 'Paid' && !(await SM.get('/approver/dashboard')).data.payments.rows.some((x) => x.claimId === claimId));
+    check('approver decisions are in the claim audit trail', ((await H.get(`/claims/${claimId}/audit`)).data.rows ?? (await H.get(`/claims/${claimId}/audit`)).data).some?.((e) => /ILA report authorized/.test(JSON.stringify(e))));
+
     // ---------- survey paybill ----------
     r = await H.get(`/claims/${claimId}/paybill`);
     check('paybill from the final surveyor + bank details from Admin profile', r.data.assigned && r.data.survey[0].value === 'Suresh Sharma' && r.data.bank.find((b) => b.key === 'ifsc').value === 'HDFC0001234' && r.data.bill[3].value === 'Test Insurance', r.data);
@@ -510,7 +561,7 @@ try {
         check('admin creates a user with 3 roles', r.status === 201 && r.data.roleKey === 'call-center' && r.data.roleKeys.length === 3, r.data);
         const multiId = r.data.id;
         check('bad role in roleKeys -> 400', (await A.patch(`/users/${multiId}`, { roleKeys: ['call-center', 'no-such-role'] })).status === 400);
-        check('Roles & Permissions counts the additional role', ((await A.get('/roles')).data ?? []).find((x) => x.key === 'state-manager')?.users === 2);
+        check('Roles & Permissions counts the additional role', ((await A.get('/roles')).data ?? []).find((x) => x.key === 'state-manager')?.users === 3); // vikram.sm + om.sm (approver tests) + this user
         r = await pub.post('/auth/login', { identifier: 'multi.role', password: 'Temp@1234' });
         check('multi-role user signs in with the primary role', r.status === 200 && r.data.user.roleKey === 'call-center', r.data);
         check('portal roles = the web roles only (mobile surveyor role left out)', JSON.stringify(r.data.user.roles?.map((x) => x.roleKey)) === '["call-center","state-manager"]', r.data.user.roles);

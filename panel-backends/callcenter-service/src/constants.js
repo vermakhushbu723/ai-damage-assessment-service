@@ -65,6 +65,8 @@ export const MODULES = {
 export const HANDLER_ROLES = ['claim-handler'];
 export const SURVEYOR_ROLES = ['internal-surveyor', 'external-surveyor'];
 export const APPROVER_ROLES = ['state-manager', 'regional-manager', 'national-manager'];
+/** Roles that open the SCM / RCM & Approver dashboard. */
+export const MANAGER_DASHBOARD_ROLES = ['state-manager', 'regional-manager'];
 
 // ---- intimation ----
 export const PRIORITIES = ['High', 'Medium', 'Low'];

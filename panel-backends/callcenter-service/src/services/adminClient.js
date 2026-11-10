@@ -99,5 +99,8 @@ export async function adminClaim(claimNo) {
     }
 }
 
+/** Open (not Cleared) fraud triggers of every claim; `claim` is the claim number. */
+export const openTriggers = () => call('GET', '/internal/triggers?open=1');
+
 /** POST /claims/ingest -- claims + communication logs. */
 export const ingest = (payload) => call('POST', '/claims/ingest', { body: payload });

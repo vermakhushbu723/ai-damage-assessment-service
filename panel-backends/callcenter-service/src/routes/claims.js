@@ -55,7 +55,7 @@ function tatLeft(submittedAt) {
 }
 
 /** Quick Filters popup: priority, source, date range, location (city), insurer. */
-function addQuickFilters(query, where, params) {
+export function addQuickFilters(query, where, params) {
     if (PRIORITIES.includes(query.priority)) {
         where.push('priority = ?');
         params.push(query.priority);

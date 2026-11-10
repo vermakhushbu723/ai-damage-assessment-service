@@ -209,6 +209,12 @@ router.get('/directory', (req, res) => {
     res.json(rows);
 });
 
+/** GET /api/v1/internal/triggers?open=1 -- fraud triggers of every claim (call center approver dashboard). */
+router.get('/triggers', (req, res) => {
+    const all = listRecords('triggers');
+    res.json(req.query.open === '1' ? all.filter((t) => t.status !== 'Cleared') : all);
+});
+
 /** GET /api/v1/internal/claims/:id -- the claim as the Admin portal sees it, plus its fraud triggers. */
 router.get('/claims/:id', (req, res) => {
     const claim = findClaim(req.params.id);
