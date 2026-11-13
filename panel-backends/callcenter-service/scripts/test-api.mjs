@@ -15,16 +15,21 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const adminRoot = join(root, '..', 'admin-service');
+const superadminRoot = join(root, '..', 'superadmin-service');
 const dir = mkdtempSync(join(tmpdir(), 'callcenter-service-test-'));
 const ADMIN_PORT = 8058;
 const CC_PORT = 8059;
 const MOCK_PORT = 8057;
+const SA_PORT = 8056;
+const SA_BASE = `http://127.0.0.1:${SA_PORT}/api/v1`;
+const SA_EMAIL = 'sa@test.in';
+const SA_PW = 'Super@12345';
 const ADMIN = `http://127.0.0.1:${ADMIN_PORT}/api/v1`;
 const CC = `http://127.0.0.1:${CC_PORT}/api/v1`;
 const KEY = 'test-service-key';
 const ADMIN_PW = 'Admin@12345';
 
-const logs = { admin: '', cc: '' };
+const logs = { admin: '', cc: '', sa: '' };
 function start(name, cwd, env) {
     const p = spawn(process.execPath, ['src/server.js'], { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
     p.stdout.on('data', (d) => { logs[name] += d; });
@@ -36,9 +41,14 @@ const admin = start('admin', adminRoot, {
     BOOTSTRAP_ADMIN_EMAIL: 'admin@test.in', BOOTSTRAP_ADMIN_MOBILE: '9876543210', BOOTSTRAP_ADMIN_PASSWORD: ADMIN_PW,
     ORGANIZATION_NAME: 'Test Insurance', CLAIMS_INGEST_KEY: KEY,
 });
+const sa = start('sa', superadminRoot, {
+    PORT: String(SA_PORT), DATABASE_FILE: join(dir, 'superadmin.db'), JWT_SECRET: 'sa-secret', CLAIMS_INGEST_KEY: KEY,
+    BOOTSTRAP_MASTER_EMAIL: SA_EMAIL, BOOTSTRAP_MASTER_PASSWORD: SA_PW, BOOTSTRAP_SAAS_PASSWORD: 'Saas@12345', BOOTSTRAP_SP_PASSWORD: 'Sp@123456',
+});
 const cc = start('cc', root, {
     PORT: String(CC_PORT), DATABASE_FILE: join(dir, 'cc.db'), UPLOADS_DIR: join(dir, 'cc-uploads'), JWT_SECRET: 'cc-secret',
     ADMIN_SERVICE_URL: `http://127.0.0.1:${ADMIN_PORT}`, ADMIN_SERVICE_KEY: KEY, USER_CACHE_SECONDS: '0',
+    SUPERADMIN_SERVICE_URL: `http://127.0.0.1:${SA_PORT}`, SUPERADMIN_SERVICE_KEY: KEY,
     NOTIFY_WEBHOOK_URL: `http://127.0.0.1:${MOCK_PORT}/notify`, AI_SERVICE_URL: `http://127.0.0.1:${MOCK_PORT}`,
     SURVEY_LINK_BASE: 'https://survey.test/s', MAX_UPLOAD_MB: '1', PUBLIC_URL: `http://127.0.0.1:${CC_PORT}`,
 });
@@ -142,7 +152,7 @@ const intimation = (o = {}) => ({
 });
 
 try {
-    await Promise.all([waitFor(ADMIN, 'admin'), waitFor(CC, 'cc')]);
+    await Promise.all([waitFor(ADMIN, 'admin'), waitFor(CC, 'cc'), waitFor(SA_BASE, 'sa')]);
     const A = api(ADMIN, (await call(ADMIN, 'POST', '/auth/login', { identifier: 'admin@test.in', password: ADMIN_PW })).data.token);
     const pub = api(CC);
 
@@ -183,6 +193,24 @@ try {
     check('new password works, must-change cleared', r.status === 200 && r.data.user.mustChangePassword === false, r.data);
     const AG2 = api(CC, r.data.token);
     check('agent cannot open Handler Allocation -> 403', (await AG2.get('/handlers')).status === 403);
+    // ---------- website common login: POST /auth/sign-in finds the portal ----------
+    r = await pub.post('/auth/sign-in', { identifier: SA_EMAIL, password: SA_PW });
+    check('sign-in: super admin -> portal superadmin + its token', r.status === 200 && r.data.portal === 'superadmin' && !!r.data.admin?.id && (await call(SA_BASE, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'admin@test.in', password: ADMIN_PW });
+    check('sign-in: admin portal admin -> portal admin + its token', r.status === 200 && r.data.portal === 'admin' && !!r.data.admin?.id && (await call(ADMIN, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: '9876543210', password: ADMIN_PW });
+    check('sign-in: admin by mobile number', r.status === 200 && r.data.portal === 'admin', r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'karan.cc', password: 'Karan@2026' });
+    check('sign-in: portal user -> portal claim, call center token works here', r.status === 200 && r.data.portal === 'claim' && r.data.user.roleKey === 'call-center' && (await api(CC, r.data.token).get('/auth/me')).status === 200, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'nobody.at.all', password: 'Whatever@1' });
+    check('sign-in: unknown name -> 401, same message as a wrong password', r.status === 401 && r.data.detail === 'Invalid user ID or password.', r.data);
+    r = await pub.post('/auth/sign-in', { identifier: SA_EMAIL, password: 'Wrong@1234' });
+    check('sign-in: wrong super admin password -> 401 from that console', r.status === 401 && !/service key/i.test(r.data.detail), r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'karan.cc', password: 'Wrong@1234' });
+    check('sign-in: wrong portal user password -> 401 with attempts left', r.status === 401 && /attempt/.test(r.data.detail), r.data);
+    check('sign-in: missing password -> 400', (await pub.post('/auth/sign-in', { identifier: 'karan.cc' })).status === 400);
+    check('superadmin /internal needs the service key', (await call(SA_BASE, 'POST', '/internal/identify', { identifier: SA_EMAIL })).status === 401);
+    check('admin /internal/identify with key', (await call(ADMIN, 'POST', '/internal/identify', { identifier: 'karan.cc' }, { headers: { 'X-Service-Key': KEY } })).data?.kind === 'user');
     const H = api(CC, (await pub.post('/auth/login', { identifier: 'rahul.ch', password: 'Temp@1234' })).data.token);
     check('claim handler signs in', (await H.get('/auth/me')).data?.user?.roleKey === 'claim-handler');
 
@@ -595,6 +623,7 @@ try {
 } finally {
     admin.kill();
     cc.kill();
+    sa.kill();
     mock.close();
     await new Promise((r) => setTimeout(r, 400));
     try {

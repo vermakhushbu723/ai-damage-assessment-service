@@ -12,7 +12,7 @@ import { findRecord, listRecords } from '../models/recordModel.js';
 import { findClaim } from '../models/claimModel.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 import { auditEvent } from '../services/audit.js';
-import { insertAdmin, findAdminRowById, adminEmailTaken, setAdminStatus, setAdminPassword } from '../models/adminModel.js';
+import { insertAdmin, findAdminRowById, adminEmailTaken, setAdminStatus, setAdminPassword, findAdminRowByIdentifier } from '../models/adminModel.js';
 import { nextSequentialId } from '../utils/ids.js';
 import { db, transaction } from '../db/database.js';
 
@@ -207,6 +207,16 @@ router.get('/directory', (req, res) => {
         });
     });
     res.json(rows);
+});
+
+/**
+ * POST /api/v1/internal/identify { identifier } -> { kind: 'admin' | 'user' | null }
+ * Which kind of account a sign-in name belongs to (website common login).
+ */
+router.post('/identify', (req, res) => {
+    const identifier = String(req.body?.identifier ?? '').trim();
+    if (!identifier) throw badRequest('identifier is required.');
+    res.json({ kind: findAdminRowByIdentifier(identifier) ? 'admin' : findUserRowByLogin(identifier) ? 'user' : null });
 });
 
 /** GET /api/v1/internal/triggers?open=1 -- fraud triggers of every claim (call center approver dashboard). */

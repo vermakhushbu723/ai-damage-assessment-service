@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { settings } from '../config.js';
 import { signToken } from '../utils/jwt.js';
-import { asyncHandler, badRequest } from '../utils/http.js';
+import { asyncHandler, badRequest, HttpError } from '../utils/http.js';
 import { authenticate, rolesOf, withRole } from '../middleware/authenticate.js';
 import { portalLogin, portalLogout, changePassword, forgetUser, getUser } from '../services/adminClient.js';
+import { accountKind, forwardLogin } from '../services/signIn.js';
 import { MODULES } from '../constants.js';
 
 // Sign-in with the account created in Admin > Create Users. admin-service
@@ -38,6 +39,26 @@ router.post('/login', asyncHandler(async (req, res) => {
     const { user } = await portalLogin(identifier, password, req);
     forgetUser(user.id);
     res.json(session(user));
+}));
+
+/**
+ * POST /api/v1/auth/sign-in { identifier, password } -- the website's common login.
+ * Finds which portal the account belongs to and signs in there only, so a wrong
+ * password counts against that one account:
+ *   -> { portal: 'superadmin' | 'admin', ...that backend's login response }
+ *   -> { portal: 'claim', token, expiresIn, user }  (this portal; the user then picks a role)
+ */
+router.post('/sign-in', asyncHandler(async (req, res) => {
+    const identifier = String(req.body?.identifier ?? '').trim();
+    const password = String(req.body?.password ?? '');
+    if (!identifier || !password) throw badRequest('Enter your User ID and password.');
+    const kind = await accountKind(identifier, req);
+    if (kind === 'superadmin' || kind === 'admin') return res.json({ portal: kind, ...(await forwardLogin(kind, identifier, password, req)) });
+    // Unknown names get the same answer as a wrong password: no hint which accounts exist.
+    if (kind !== 'user') throw new HttpError(401, 'Invalid user ID or password.');
+    const { user } = await portalLogin(identifier, password, req);
+    forgetUser(user.id);
+    return res.json({ portal: 'claim', ...session(user) });
 }));
 
 /** A session token for `user` acting in their active role (user.roleKey). */

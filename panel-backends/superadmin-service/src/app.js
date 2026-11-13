@@ -16,6 +16,7 @@ import downloadsRouter from './routes/downloads.js';
 import reportsRouter from './routes/reports.js';
 import integrationsRouter from './routes/integrations.js';
 import systemRouter from './routes/system.js';
+import internalRouter from './routes/internal.js';
 import { countApiRequest } from './models/systemModel.js';
 
 export const app = express();
@@ -49,6 +50,7 @@ api.use('/downloads', downloadsRouter);
 api.use('/reports', reportsRouter);
 api.use('/integrations', integrationsRouter);
 api.use('/system', systemRouter);
+api.use('/internal', internalRouter); // service-to-service (X-Service-Key)
 api.get('/health', (_req, res) => res.json({ status: 'ok', service: 'superadmin-service' }));
 api.use((_req, res) => res.status(404).json({ detail: 'Not found.' }));
 

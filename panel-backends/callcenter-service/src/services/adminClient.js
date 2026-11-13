@@ -47,6 +47,9 @@ async function call(method, path, { body, req } = {}) {
 export const portalLogin = (identifier, password, req) =>
     call('POST', '/internal/portal-login', { body: { identifier, password, portal: 'callcenter' }, req });
 
+/** { kind: 'admin' | 'user' | null } of a sign-in name. */
+export const identifyAccount = (identifier, req) => call('POST', '/internal/identify', { body: { identifier }, req });
+
 export const portalLogout = (userId, req) =>
     call('POST', '/internal/portal-logout', { body: { userId, portal: 'callcenter' }, req }).catch(() => null);
 

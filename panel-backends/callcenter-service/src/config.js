@@ -31,6 +31,10 @@ export const settings = {
     adminServiceUrl: (process.env.ADMIN_SERVICE_URL || 'http://127.0.0.1:8040').replace(/\/$/, ''),
     // Must equal CLAIMS_INGEST_KEY in admin-service/.env.
     adminServiceKey: process.env.ADMIN_SERVICE_KEY || '',
+    // superadmin-service, for the website's common login (POST /auth/sign-in). Empty = super admins sign in only on their own console.
+    superadminServiceUrl: (process.env.SUPERADMIN_SERVICE_URL || '').replace(/\/$/, ''),
+    // Must equal CLAIMS_INGEST_KEY in superadmin-service/.env.
+    superadminServiceKey: process.env.SUPERADMIN_SERVICE_KEY || '',
     // How long a signed-in user's admin record (status, role, permissions) is reused before re-checking.
     userCacheSeconds: Number(process.env.USER_CACHE_SECONDS || 30),
 

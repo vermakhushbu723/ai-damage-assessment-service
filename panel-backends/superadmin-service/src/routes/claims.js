@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { timingSafeEqual } from 'node:crypto';
 import { settings } from '../config.js';
 import { asyncHandler, validate, badRequest, notFound, HttpError } from '../utils/http.js';
 import { authenticate, serviceModelOfAdmin, isMaster } from '../middleware/authenticate.js';
@@ -8,15 +7,11 @@ import { listClaims, findClaim, upsertClaim } from '../models/claimModel.js';
 import { findOrganization } from '../models/organizationModel.js';
 import { transaction } from '../db/database.js';
 import { audit } from '../services/audit.js';
+import { serviceKeyMatches } from '../middleware/serviceKey.js';
 
 const router = Router();
 
-const keyMatches = (given) => {
-    if (!settings.claimsIngestKey || !given) return false;
-    const a = Buffer.from(String(given));
-    const b = Buffer.from(settings.claimsIngestKey);
-    return a.length === b.length && timingSafeEqual(a, b);
-};
+const keyMatches = serviceKeyMatches;
 
 /**
  * POST /api/v1/claims/ingest -- how claims reach the reports.
