@@ -45,6 +45,23 @@ let lastMockAuth = null;
 const portalCalls = [];
 const mock = http.createServer((req, res) => {
     lastMockAuth = req.headers.authorization ?? null;
+    if (req.url.startsWith('/api/v1/internal/org-members')) {
+        let raw = '';
+        req.on('data', (c) => { raw += c; });
+        return req.on('end', () => {
+            const body = JSON.parse(raw || '{}');
+            portalCalls.push({ method: req.method, path: req.url, key: req.headers['x-service-key'], body });
+            res.setHeader('Content-Type', 'application/json');
+            const adminId = body.adminIds?.[0];
+            return res.end(JSON.stringify({
+                admins: [{ id: adminId, name: 'Sana Iyer', status: 'Active', lastLoginAt: '2026-11-01T10:00:00.000Z' }],
+                users: [
+                    { userId: 'PORTAL-TCT-1', name: 'Tina Tct', email: 'tina@spni.in', roleName: 'TCT', status: 'Active', branch: 'Pune', createdBy: adminId, createdAt: '2026-11-02T10:00:00.000Z' },
+                    { userId: globalThis.dupLogin, name: 'dup', roleName: 'x', status: 'Active', createdBy: 'superadmin' },
+                ],
+            }));
+        });
+    }
     if (req.url.startsWith('/api/v1/internal/accounts')) {
         let raw = '';
         req.on('data', (c) => { raw += c; });
@@ -522,6 +539,31 @@ try {
     await call('PATCH', `/users/${handlerLogin}`, { token: sp, body: { status: 'Suspended' } });
     await call('POST', `/users/${handlerLogin}/reset-password`, { token: sp, body: { password: 'Hari@54321', reason: 'forgot' } });
     check('users: suspend + manual reset reach admin-service', portalCalls.length === 2 && portalCalls[0].method === 'PATCH' && portalCalls[0].body.status === 'Suspended' && portalCalls[1].body.password === 'Hari@54321', JSON.stringify(portalCalls));
+
+    // ---------------- One organization's admins + users ----------------
+    globalThis.dupLogin = handlerLogin; // admin-service also has the console-issued user: listed once
+    portalCalls.length = 0;
+    r = await call('GET', `/organizations/${spOrgId}/members`, { token: sp });
+    check('members: org admin listed with its Admin portal last login', r.status === 200 && r.data.admins.length === 1 && r.data.admins[0].id === spAdminLogin && r.data.admins[0].lastLogin === '2026-11-01T10:00:00.000Z', JSON.stringify(r.data));
+    check('members: asks admin-service for the users its admins created', portalCalls[0]?.body.adminIds?.includes(spAdminLogin) && portalCalls[0].body.organization === 'SP No Plan Insurer' && portalCalls[0].key === 'admin-key', JSON.stringify(portalCalls));
+    const memberIds = (r.data.users ?? []).map((u) => u.id);
+    check('members: console user (once) + Admin portal user, created-by shown', memberIds.filter((x) => x === handlerLogin).length === 1 && memberIds.includes('PORTAL-TCT-1')
+        && r.data.users.find((u) => u.id === 'PORTAL-TCT-1').createdBy === `Sana Iyer (${spAdminLogin})` && r.data.users.find((u) => u.id === 'PORTAL-TCT-1').source === 'Admin Portal', JSON.stringify(r.data.users));
+    check('members: adminPortal connected', r.data.adminPortal === 'connected' && r.data.organization.id === spOrgId);
+    r = await call('GET', `/organizations/${org1.id}/members`, { token: sp });
+    check('members: another scope\'s organization -> 404', r.status === 404);
+    r = await call('GET', '/organizations/ORG-NOPE/members', { token: master });
+    check('members: unknown organization -> 404', r.status === 404);
+
+    // ---------------- Admin Users: every organization's admin ----------------
+    portalCalls.length = 0;
+    r = await call('GET', '/organizations/admins', { token: sp });
+    check('org admins: SP admin sees its organizations\' admins only', r.status === 200 && r.data.admins.some((a) => a.id === spAdminLogin && a.organizationId === spOrgId && a.primary)
+        && !r.data.admins.some((a) => a.organizationId === org1.id), JSON.stringify(r.data));
+    check('org admins: Admin portal asked for admins only', portalCalls[0]?.body.adminsOnly === true && portalCalls[0].body.adminIds.includes(spAdminLogin), JSON.stringify(portalCalls));
+    check('org admins: users are not listed as admins', !r.data.admins.some((a) => a.id === handlerLogin));
+    r = await call('GET', '/organizations/admins', { token: master });
+    check('org admins: master sees admins of every organization', r.status === 200 && r.data.admins.some((a) => a.organizationId === org1.id) && r.data.admins.some((a) => a.organizationId === spOrgId));
 
     // ---------------- Misc ----------------
     r = await fetch(`${BASE}/organizations`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${master}` }, body: '{bad json' });

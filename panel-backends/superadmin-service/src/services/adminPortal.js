@@ -58,3 +58,12 @@ export async function updatePortalLogin(id, patch) {
         throw err;
     }
 }
+
+/**
+ * One organization's Admin portal accounts: its admin logins (adminIds), the users they
+ * created there, and the users this console issued for it. null = admin-service not connected.
+ */
+export async function organizationMembers(adminIds, organization, { adminsOnly = false } = {}) {
+    if (!adminPortalConnected()) return null;
+    return call('POST', '/org-members', { adminIds, organization, adminsOnly });
+}

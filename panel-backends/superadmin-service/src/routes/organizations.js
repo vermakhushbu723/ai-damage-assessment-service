@@ -7,11 +7,11 @@ import {
     listOrganizations, findOrganization, insertOrganization, updateOrganization, orgNameTaken,
 } from '../models/organizationModel.js';
 import { findPlan } from '../models/planModel.js';
-import { insertUser, userIdTaken } from '../models/userModel.js';
+import { insertUser, userIdTaken, listOrganizationUsers, listOrganizationAdmins } from '../models/userModel.js';
 import { hashPassword } from '../utils/password.js';
 import { generatePassword, nextSequentialId } from '../utils/ids.js';
 import { audit } from '../services/audit.js';
-import { createPortalLogin } from '../services/adminPortal.js';
+import { createPortalLogin, organizationMembers } from '../services/adminPortal.js';
 
 const router = Router();
 router.use(authenticate);
@@ -44,7 +44,94 @@ router.get('/', (req, res) => {
     res.json(listOrganizations(serviceModelOfAdmin(req.admin)));
 });
 
+/**
+ * GET /api/v1/organizations/admins -> { admins, adminPortal } -- Super Admin > Admin Users:
+ * every organization's admin login, with its Admin portal status / last sign-in.
+ */
+router.get('/admins', asyncHandler(async (req, res) => {
+    const admins = listOrganizationAdmins(serviceModelOfAdmin(req.admin));
+    let portal = null;
+    let adminPortal = 'not-connected';
+    if (admins.length) {
+        try {
+            portal = await organizationMembers(admins.map((a) => a.id), '', { adminsOnly: true });
+            if (portal) adminPortal = 'connected';
+        } catch {
+            adminPortal = 'unavailable';
+        }
+    }
+    const live = Object.fromEntries((portal?.admins ?? []).map((a) => [a.id.toLowerCase(), a]));
+    res.json({
+        adminPortal,
+        admins: admins.map((a) => {
+            const p = live[a.id.toLowerCase()];
+            return {
+                id: a.id, name: a.name, email: a.email, phone: a.phone, status: a.status,
+                portalStatus: p?.status ?? null, lastLogin: p?.lastLoginAt ?? a.lastLogin, createdOn: a.createdOn,
+                organizationId: a.organizationId, organization: a.organization, organizationType: a.organizationType,
+                organizationStatus: a.organizationStatus, primary: a.primary,
+            };
+        }),
+    });
+}));
+
 router.get('/:id', (req, res) => res.json(loadOwnOrganization(req)));
+
+/**
+ * GET /api/v1/organizations/:id/members -> { organization, admins, users, adminPortal }
+ * Everyone who belongs to one organization:
+ *   - login IDs issued here (users.organization_id): role "Admin" = its admins (incl. ORG-xxxx-ADM)
+ *   - users its admins created in the Admin portal (Create Users), read from admin-service
+ * adminPortal: 'connected' | 'unavailable' (admin-service down; only this console's logins listed) | 'not-connected'.
+ */
+router.get('/:id/members', asyncHandler(async (req, res) => {
+    const org = loadOwnOrganization(req);
+    const own = listOrganizationUsers(org.id);
+    const isAdmin = (u) => u.role === 'Admin' || u.id === org.adminLoginId;
+    const adminIds = [...new Set([org.adminLoginId, ...own.filter(isAdmin).map((u) => u.id)].filter(Boolean))];
+
+    let portal = null;
+    let adminPortal = 'not-connected';
+    try {
+        portal = await organizationMembers(adminIds, org.name);
+        if (portal) adminPortal = 'connected';
+    } catch {
+        adminPortal = 'unavailable';
+    }
+    const portalAdmins = Object.fromEntries((portal?.admins ?? []).map((a) => [a.id.toLowerCase(), a]));
+    const portalUsers = portal?.users ?? [];
+    const portalByLogin = Object.fromEntries(portalUsers.map((u) => [String(u.userId).toLowerCase(), u]));
+    const adminName = Object.fromEntries(own.filter(isAdmin).map((u) => [u.id.toLowerCase(), u.name]));
+
+    const admins = own.filter(isAdmin).map((u) => {
+        const p = portalAdmins[u.id.toLowerCase()];
+        return {
+            id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, status: p?.status ?? u.status,
+            lastLogin: p?.lastLoginAt ?? u.lastLogin, createdOn: u.createdOn, source: 'Super Admin',
+        };
+    });
+    const fromConsole = own.filter((u) => !isAdmin(u)).map((u) => {
+        const p = portalByLogin[u.id.toLowerCase()];
+        return {
+            id: u.id, name: u.name, email: u.email, phone: u.phone, role: u.role, branch: u.branch ?? p?.branch ?? null,
+            status: u.status, lastLogin: p?.lastLoginAt ?? u.lastLogin, createdOn: u.createdOn,
+            createdBy: 'Super Admin', source: 'Super Admin',
+        };
+    });
+    const consoleIds = new Set(own.map((u) => u.id.toLowerCase()));
+    const fromPortal = portalUsers.filter((u) => !consoleIds.has(String(u.userId).toLowerCase())).map((u) => ({
+        id: u.userId, name: u.name, email: u.email, phone: u.contact, role: u.roleName, branch: u.branch,
+        status: u.status, lastLogin: u.lastLoginAt, createdOn: u.createdAt,
+        createdBy: u.createdBy === 'superadmin' ? 'Super Admin' : (adminName[String(u.createdBy).toLowerCase()] ? `${adminName[String(u.createdBy).toLowerCase()]} (${u.createdBy})` : u.createdBy),
+        source: 'Admin Portal',
+    }));
+    res.json({
+        organization: { id: org.id, name: org.name, type: org.type, adminLoginId: org.adminLoginId },
+        admins,
+        users: [...fromConsole, ...fromPortal],
+        adminPortal,
+    });
+}));
 
 /**
  * POST /api/v1/organizations -- "Create Pilot ID" / "Create Working ID".

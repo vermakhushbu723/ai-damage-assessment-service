@@ -693,6 +693,18 @@ try {
     await patch('/internal/accounts/USR-5001', { password: 'Hari@54321' }, svc);
     check('accounts: password reset from the Super Admin works', (await post('/internal/portal-login', { identifier: 'USR-5001', password: 'Hari@54321', portal: 'callcenter' }, svc)).status === 200);
     check('accounts: unknown account -> 404', (await patch('/internal/accounts/NOPE-1', { status: 'Active' }, svc)).status === 404);
+
+    // One organization's accounts (Super Admin > Organizations > view)
+    check('org-members needs the service key', (await post('/internal/org-members', { adminIds: ['ORG-1001-ADM'] }, { token: null })).status === 401);
+    check('org-members: nothing to look up -> 400', (await post('/internal/org-members', {}, svc)).status === 400);
+    r = await post('/internal/org-members', { adminIds: ['ORG-1001-ADM'], organization: 'sp insurer' }, svc);
+    check('org-members: its admin + the user the console issued for it', r.status === 200 && r.data.admins.length === 1 && r.data.admins[0].id === 'ORG-1001-ADM'
+        && r.data.users.some((u) => u.userId === 'USR-5001' && u.roleName && u.createdBy === 'superadmin'), JSON.stringify(r.data));
+    r = await post('/internal/org-members', { adminIds: ['ADM-NOBODY'], organization: 'Other Org' }, svc);
+    r = await post('/internal/org-members', { adminIds: ['ORG-1001-ADM'], organization: 'SP Insurer', adminsOnly: true }, svc);
+    check('org-members: adminsOnly -> no users', r.status === 200 && r.data.admins.length === 1 && r.data.users.length === 0, JSON.stringify(r.data));
+    r = await post('/internal/org-members', { adminIds: ['ADM-NOBODY'], organization: 'Other Org' }, svc);
+    check('org-members: other organization sees none of them', r.status === 200 && r.data.admins.length === 0 && !r.data.users.some((u) => u.userId === 'USR-5001'), JSON.stringify(r.data));
 } catch (err) {
     fail++;
     console.error('ERROR', err);

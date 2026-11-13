@@ -20,7 +20,7 @@ export const toUserDto = (r) => r && ({
     updatedOn: r.updated_at,
 });
 
-const SELECT = `SELECT u.*, o.name AS org_name, o.service_model AS org_service_model
+const SELECT = `SELECT u.*, o.name AS org_name, o.service_model AS org_service_model, o.type AS org_type, o.status AS org_status, o.admin_login_id
                 FROM users u JOIN organizations o ON o.id = u.organization_id`;
 
 export function listUsers(serviceModel = null) {
@@ -75,3 +75,14 @@ export function insertResetToken({ tokenHash, userId, expiresAt, createdBy }) {
 export const findResetToken = (tokenHash) => db.prepare('SELECT * FROM password_reset_tokens WHERE token_hash = ?').get(tokenHash);
 
 export const markResetTokenUsed = (tokenHash) => db.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?').run(nowIso(), tokenHash);
+
+/** Login IDs issued in this console for one organization (its admin first, then newest). */
+export const listOrganizationUsers = (organizationId) => db.prepare(`${SELECT} WHERE lower(u.organization_id) = lower(?)
+    ORDER BY CASE WHEN u.role = 'Admin' THEN 0 ELSE 1 END, u.created_at DESC`).all(organizationId).map(toUserDto);
+
+/** Every organization's admin login(s) (role "Admin"), optionally one service model only. */
+export function listOrganizationAdmins(serviceModel = null) {
+    const where = "u.role = 'Admin'" + (serviceModel ? ' AND o.service_model = ?' : '');
+    const rows = db.prepare(`${SELECT} WHERE ${where} ORDER BY o.name COLLATE NOCASE, u.created_at`).all(...(serviceModel ? [serviceModel] : []));
+    return rows.map((r) => ({ ...toUserDto(r), organizationType: r.org_type, organizationStatus: r.org_status, primary: r.admin_login_id === r.id }));
+}

@@ -210,6 +210,50 @@ router.get('/directory', (req, res) => {
 });
 
 /**
+ * POST /api/v1/internal/org-members { adminIds: [...], organization? } -> { admins, users }
+ * One organization's Admin portal accounts (Super Admin > Organizations > view):
+ * its admin logins (adminIds), the users those admins created in Create Users,
+ * and the users the Super Admin console issued for it (created_by 'superadmin',
+ * same organization name). adminsOnly: true -> just the admins (Super Admin > Admin Users).
+ */
+router.post('/org-members', (req, res) => {
+    const adminIds = (Array.isArray(req.body?.adminIds) ? req.body.adminIds : []).map(String).filter(Boolean).slice(0, 1000);
+    const organization = String(req.body?.organization ?? '').trim();
+    if (!adminIds.length && !organization) throw badRequest('adminIds or organization is required.');
+    const adminsOnly = req.body?.adminsOnly === true;
+    const admins = adminIds.map(findAdminRowById).filter(Boolean).map((a) => ({
+        id: a.id, name: a.name, email: a.email, mobile: a.mobile, status: a.status, lastLoginAt: a.last_login_at, createdAt: a.created_at,
+    }));
+    if (adminsOnly) return res.json({ admins, users: [] });
+    const marks = adminIds.map(() => '?').join(', ');
+    const conds = [];
+    const args = [];
+    if (adminIds.length) { conds.push(`created_by IN (${marks})`); args.push(...adminIds); }
+    if (organization) { conds.push("(created_by = 'superadmin' AND lower(organization) = lower(?))"); args.push(organization); }
+    const rows = db.prepare(`SELECT * FROM users WHERE ${conds.join(' OR ')} ORDER BY created_at DESC, id DESC`).all(...args);
+    const users = rows.map((u) => {
+        const data = (() => { try { return JSON.parse(u.data || '{}'); } catch { return {}; } })();
+        return {
+            id: u.id,
+            userId: u.user_id,
+            employeeId: u.employee_id,
+            name: u.name,
+            email: u.email,
+            contact: u.contact,
+            roleKey: u.role_key,
+            roleName: findRole(u.role_key)?.name ?? u.role_key,
+            status: u.status,
+            organization: u.organization,
+            branch: (data.extra?.branchId && findRecord('branches', data.extra.branchId)?.name) || data.branch || null,
+            createdBy: u.created_by,
+            lastLoginAt: u.last_login_at ?? null,
+            createdAt: u.created_at,
+        };
+    });
+    res.json({ admins, users });
+});
+
+/**
  * POST /api/v1/internal/identify { identifier } -> { kind: 'admin' | 'user' | null }
  * Which kind of account a sign-in name belongs to (website common login).
  */
