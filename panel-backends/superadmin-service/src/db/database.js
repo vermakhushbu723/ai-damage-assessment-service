@@ -241,6 +241,10 @@ db.exec(`
     );
 `);
 
+// Columns added after the first deploy (node:sqlite has no migrations).
+// users.roles: every role of the user (JSON array, first = users.role); NULL = just users.role.
+if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'roles')) db.exec('ALTER TABLE users ADD COLUMN roles TEXT');
+
 /** Run fn inside a transaction (node:sqlite has no helper for it). */
 export function transaction(fn) {
     db.exec('BEGIN');

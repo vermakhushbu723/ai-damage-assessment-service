@@ -11,7 +11,24 @@ import { findOrganization } from '../models/organizationModel.js';
 import { hashPassword } from '../utils/password.js';
 import { generatePassword, nextSequentialId, randomToken, sha256 } from '../utils/ids.js';
 import { audit } from '../services/audit.js';
-import { createPortalLogin, updatePortalLogin } from '../services/adminPortal.js';
+import { createPortalLogin, updatePortalLogin, roleKeysOf } from '../services/adminPortal.js';
+
+/**
+ * A user's roles from { roles: [...] } (several, first = primary) or { role }. "Admin" is an
+ * Admin portal login (not a portal user role), so it cannot be combined with other roles.
+ */
+function rolesFrom(body, { required }) {
+    const raw = Array.isArray(body.roles) ? body.roles : body.role ? [body.role] : [];
+    const roles = [...new Set(raw.map((r) => String(r).trim()).filter(Boolean))];
+    if (!roles.length) {
+        if (required) throw badRequest('Select at least one role.');
+        return null;
+    }
+    const bad = roles.find((r) => !USER_ROLES.includes(r));
+    if (bad) throw badRequest(`Role "${bad}" does not exist.`);
+    if (roles.includes('Admin') && roles.length > 1) throw badRequest('Admin is an organization admin login and cannot be combined with other roles.');
+    return roles;
+}
 
 const router = Router();
 router.use(authenticate);
@@ -78,7 +95,8 @@ router.get('/:id', (req, res) => res.json(loadOwnUser(req)));
 
 /**
  * POST /api/v1/users -- "+ Add User".
- * { organizationId, name, email, phone, role, branch?, platform?, status?, password? } -> { user, credentials }
+ * { organizationId, name, email, phone, roles: [...] (or role), branch?, platform?, status?, password? } -> { user, credentials }
+ * With several roles the user picks one after signing in and can switch later (profile menu).
  */
 router.post('/', asyncHandler(async (req, res) => {
     const body = validate(req.body, {
@@ -86,19 +104,19 @@ router.post('/', asyncHandler(async (req, res) => {
         name: { required: true, min: 2, max: 100, label: 'Full name' },
         email: { required: true, email: true, label: 'Email' },
         phone: { required: true, phone: true, label: 'Mobile number' },
-        role: { required: true, oneOf: USER_ROLES, label: 'Role' },
         branch: { max: 80, label: 'Branch' },
         platform: { oneOf: PLATFORMS, label: 'Platform' },
         status: { oneOf: USER_STATUSES, label: 'Status' },
         password: { label: 'Password' },
     });
+    const roles = rolesFrom(req.body, { required: true });
     const org = loadOwnOrganization(req, body.organizationId);
     const password = body.password || generatePassword();
     checkPassword(password);
     const id = nextSequentialId('users', 'USR', 1000);
     // The login ID must work where the user signs in (Admin portal, call center portal, apps).
     const portal = await createPortalLogin({
-        id, name: body.name, email: body.email.toLowerCase(), phone: normalizePhone(body.phone), password, role: body.role,
+        id, name: body.name, email: body.email.toLowerCase(), phone: normalizePhone(body.phone), password, role: roles[0], roles,
         status: body.status ?? 'Active', organization: org.name, branch: body.branch, platform: body.platform ?? 'Both',
     });
     const user = insertUser({
@@ -107,14 +125,15 @@ router.post('/', asyncHandler(async (req, res) => {
         name: body.name,
         email: body.email.toLowerCase(),
         phone: normalizePhone(body.phone),
-        role: body.role,
+        role: roles[0],
+        roles,
         branch: body.branch ?? null,
         platform: body.platform ?? 'Both',
         status: body.status ?? 'Active',
         passwordHash: hashPassword(password),
         mustChangePassword: true,
     });
-    audit(req, { action: 'Created', module: 'Users', detail: `${user.id} ${user.name} (${org.name})` });
+    audit(req, { action: 'Created', module: 'Users', detail: `${user.id} ${user.name} (${org.name}) roles: ${roles.join(', ')}` });
     res.status(201).json({ user, credentials: { loginId: user.id, password, portal: portal ? (portal.kind === 'admin' ? 'Admin Portal' : portal.role) : null } });
 }));
 
@@ -125,18 +144,24 @@ router.patch('/:id', asyncHandler(async (req, res) => {
         name: { min: 2, max: 100, label: 'Full name' },
         email: { email: true, label: 'Email' },
         phone: { phone: true, label: 'Mobile number' },
-        role: { oneOf: USER_ROLES, label: 'Role' },
         branch: { max: 80, label: 'Branch' },
         platform: { oneOf: PLATFORMS, label: 'Platform' },
         status: { oneOf: USER_STATUSES, label: 'Status' },
         organizationId: { label: 'Organization' },
     }, { partial: true });
+    const roles = rolesFrom(req.body, { required: false });
+    if (roles) {
+        // An admin login and a portal user are different kinds of account in admin-service.
+        if (roles.includes('Admin') !== user.roles.includes('Admin')) throw badRequest('Admin and the other roles are different logins: create a new login instead of changing this one.');
+        if (!roles.includes('Admin') && roles.join() !== user.roles.join()) await updatePortalLogin(user.id, { roleKeys: roleKeysOf(roles) });
+        patch.roles = roles;
+    }
     if (patch.organizationId) loadOwnOrganization(req, patch.organizationId);
     if (patch.phone) patch.phone = normalizePhone(patch.phone);
     if (patch.email) patch.email = patch.email.toLowerCase();
     if (patch.status && patch.status !== user.status) await updatePortalLogin(user.id, { status: patch.status });
     const updated = updateUser(user.id, patch);
-    audit(req, { action: 'Updated', module: 'Users', detail: `${user.id}: ${Object.entries(patch).map(([k, v]) => `${k}=${v}`).join(', ')}` });
+    audit(req, { action: 'Updated', module: 'Users', detail: `${user.id}: ${Object.entries(patch).map(([k, v]) => `${k}=${Array.isArray(v) ? v.join('/') : v}`).join(', ')}` });
     res.json(updated);
 }));
 

@@ -1,5 +1,14 @@
 import { db, nowIso } from '../db/database.js';
 
+/** Every role of a user row: users.roles (JSON), else just users.role. */
+function rolesOfRow(r) {
+    try {
+        const list = JSON.parse(r.roles || 'null');
+        if (Array.isArray(list) && list.length) return list;
+    } catch { /* fall back to the single role */ }
+    return r.role ? [r.role] : [];
+}
+
 /** DB row (joined with its organization) -> API shape. */
 export const toUserDto = (r) => r && ({
     id: r.id,
@@ -11,6 +20,7 @@ export const toUserDto = (r) => r && ({
     organization: r.org_name,
     serviceModel: r.org_service_model,
     role: r.role,
+    roles: rolesOfRow(r),
     branch: r.branch,
     platform: r.platform,
     status: r.status,
@@ -35,9 +45,9 @@ export const findUser = (id) => toUserDto(findUserRow(id));
 
 export function insertUser(u) {
     const now = nowIso();
-    db.prepare(`INSERT INTO users (id, organization_id, name, email, phone, role, branch, platform, status, password_hash, must_change_password, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        u.id, u.organizationId, u.name, u.email, u.phone ?? null, u.role, u.branch ?? null, u.platform ?? null, u.status,
+    db.prepare(`INSERT INTO users (id, organization_id, name, email, phone, role, roles, branch, platform, status, password_hash, must_change_password, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        u.id, u.organizationId, u.name, u.email, u.phone ?? null, u.roles?.[0] ?? u.role, JSON.stringify(u.roles?.length ? u.roles : [u.role]), u.branch ?? null, u.platform ?? null, u.status,
         u.passwordHash, u.mustChangePassword === false ? 0 : 1, now, now,
     );
     return findUser(u.id);
@@ -52,6 +62,10 @@ export function updateUser(id, patch) {
         if (patch[key] === undefined) continue;
         sets.push(`${column} = ?`);
         values.push(patch[key]);
+    }
+    if (Array.isArray(patch.roles) && patch.roles.length) {
+        sets.push('roles = ?', 'role = ?');
+        values.push(JSON.stringify(patch.roles), patch.roles[0]);
     }
     if (sets.length) db.prepare(`UPDATE users SET ${sets.join(', ')}, updated_at = ? WHERE id = ?`).run(...values, nowIso(), id);
     return findUser(id);

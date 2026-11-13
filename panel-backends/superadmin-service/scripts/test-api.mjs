@@ -555,6 +555,27 @@ try {
     r = await call('GET', '/organizations/ORG-NOPE/members', { token: master });
     check('members: unknown organization -> 404', r.status === 404);
 
+    // ---------------- Several roles per user ----------------
+    portalCalls.length = 0;
+    r = await call('POST', '/users', { token: sp, body: { organizationId: spOrgId, name: 'Multi Role', email: 'multi@spni.in', phone: '9876500077', roles: ['Claim Handler', 'Call Center'], password: 'Multi@12345' } });
+    const multiLogin = r.data.credentials?.loginId;
+    check('roles: user with two roles -> 201, primary first', r.status === 201 && r.data.user.role === 'Claim Handler' && r.data.user.roles.join() === 'Claim Handler,Call Center', JSON.stringify(r.data));
+    check('roles: admin-service gets both role keys', portalCalls[0]?.body.roleKey === 'claim-handler' && portalCalls[0].body.roleKeys?.join() === 'claim-handler,call-center', JSON.stringify(portalCalls));
+    r = await call('POST', '/users', { token: sp, body: { organizationId: spOrgId, name: 'Bad Mix', email: 'mix@spni.in', phone: '9876500078', roles: ['Admin', 'TCT'] } });
+    check('roles: Admin + another role -> 400', r.status === 400, JSON.stringify(r.data));
+    r = await call('POST', '/users', { token: sp, body: { organizationId: spOrgId, name: 'No Role', email: 'norole@spni.in', phone: '9876500079', roles: [] } });
+    check('roles: none -> 400', r.status === 400);
+    r = await call('POST', '/users', { token: sp, body: { organizationId: spOrgId, name: 'Bad Role', email: 'badrole@spni.in', phone: '9876500080', roles: ['Pilot'] } });
+    check('roles: unknown role -> 400', r.status === 400);
+    portalCalls.length = 0;
+    r = await call('PATCH', `/users/${multiLogin}`, { token: sp, body: { roles: ['TCT', 'Sr TCT', 'Call Center'] } });
+    check('roles: change roles -> saved + sent to admin-service', r.status === 200 && r.data.role === 'TCT' && r.data.roles.length === 3
+        && portalCalls[0]?.method === 'PATCH' && portalCalls[0].body.roleKeys?.join() === 'tct,sr-tct,call-center', JSON.stringify([r.data, portalCalls]));
+    r = await call('PATCH', `/users/${multiLogin}`, { token: sp, body: { role: 'Admin' } });
+    check('roles: user cannot be turned into an Admin login -> 400', r.status === 400);
+    r = await call('GET', '/users', { token: sp });
+    check('roles: old single-role users list their one role', r.data.find((u) => u.id === handlerLogin)?.roles?.join() === 'Claim Handler');
+
     // ---------------- Admin Users: every organization's admin ----------------
     portalCalls.length = 0;
     r = await call('GET', '/organizations/admins', { token: sp });

@@ -5,7 +5,7 @@ import { hasServiceKey } from '../middleware/authenticate.js';
 import { PERMISSION_MODULES } from '../constants.js';
 import {
     findUser, findUserRowByLogin, findUserRow, listUsersByRole, recordUserLoginSuccess, recordUserLoginFailure, setUserPassword,
-    insertUser, setUserStatus,
+    insertUser, setUserStatus, updateUser,
 } from '../models/userModel.js';
 import { findRole } from '../models/roleModel.js';
 import { findRecord, listRecords } from '../models/recordModel.js';
@@ -284,9 +284,19 @@ const ACCOUNT_STATUSES = ['Active', 'Inactive', 'Pending', 'Suspended', 'On Leav
 /**
  * POST /api/v1/internal/accounts -- a login ID issued in the Super Admin console.
  * { kind: "admin", id, name, email, mobile?, password }         -> Admin portal sign-in (login with id, email or mobile)
- * { kind: "user", id, name, email, mobile?, roleKey, password,  -> Create Users account (call center portal / apps,
+ * { kind: "user", id, name, email, mobile?, roleKey, roleKeys?, password, -> Create Users account (call center portal / apps,
  *   status?, organization?, branch?, platform? }                    login with id or email), first login changes the password
  */
+/** Validated role keys (existing roles, no duplicates); `primary` goes first. */
+function accountRoleKeys(list, primary) {
+    if (list !== undefined && !Array.isArray(list)) throw badRequest('roleKeys must be a list.');
+    const keys = [...new Set([primary, ...(list ?? [])].filter(Boolean).map(String))];
+    if (!keys.length) throw badRequest('At least one role is required.');
+    const missing = keys.find((k) => !findRole(k));
+    if (missing) throw badRequest(`Role "${missing}" does not exist in the Admin portal.`);
+    return keys;
+}
+
 router.post('/accounts', asyncHandler(async (req, res) => {
     const body = validate(req.body, {
         kind: { required: true, oneOf: ['admin', 'user'], label: 'kind' },
@@ -316,8 +326,9 @@ router.post('/accounts', asyncHandler(async (req, res) => {
         return res.status(201).json({ kind: 'admin', id: admin.id, portal: 'Admin Portal' });
     }
 
-    const role = findRole(body.roleKey);
+    const role = findRole(body.roleKey ?? req.body?.roleKeys?.[0]);
     if (!role) throw badRequest(`Role "${body.roleKey}" does not exist in the Admin portal.`);
+    const roleKeys = accountRoleKeys(req.body?.roleKeys, role.key);
     if (db.prepare('SELECT 1 FROM users WHERE lower(email) = lower(?)').get(email)) throw conflict(`A user with ${email} already exists in the Admin portal.`);
     const user = transaction(() => insertUser({
         id: nextSequentialId('users', 'USR', 1000),
@@ -327,7 +338,7 @@ router.post('/accounts', asyncHandler(async (req, res) => {
         email,
         contact: mobile,
         roleKey: role.key,
-        roleKeys: [role.key],
+        roleKeys,
         status: body.status ?? 'Active',
         organization: body.organization ?? null,
         accountType: 'External',
@@ -342,15 +353,16 @@ router.post('/accounts', asyncHandler(async (req, res) => {
 }));
 
 /**
- * PATCH /api/v1/internal/accounts/:id { status?, password? } -- User Activation / suspend and
- * password resets done in the Super Admin console.
+ * PATCH /api/v1/internal/accounts/:id { status?, password?, roleKeys? } -- User Activation / suspend,
+ * password resets and role changes done in the Super Admin console (roleKeys: users only, first = primary).
  */
 router.patch('/accounts/:id', (req, res) => {
     const { status, password } = validate(req.body, {
         status: { oneOf: ACCOUNT_STATUSES, label: 'Status' },
         password: { label: 'Password' },
     });
-    if (!status && !password) throw badRequest('Send status and/or password.');
+    const roleKeys = req.body?.roleKeys === undefined ? null : accountRoleKeys(req.body.roleKeys);
+    if (!status && !password && !roleKeys) throw badRequest('Send status, password and/or roleKeys.');
     if (password) checkPassword(password, 'Password');
     if (findAdminRowById(req.params.id)) {
         if (status) setAdminStatus(req.params.id, status === 'Active' ? 'Active' : 'Suspended');
@@ -361,7 +373,8 @@ router.patch('/accounts/:id', (req, res) => {
     if (!row) throw notFound('Account');
     if (status) setUserStatus([row.id], status);
     if (password) setUserPassword(row.id, hashPassword(password), { mustChange: true });
-    res.json({ kind: 'user', id: req.params.id });
+    if (roleKeys) updateUser(row.id, { roleKey: roleKeys[0], roleKeys });
+    res.json({ kind: 'user', id: req.params.id, ...(roleKeys ? { roleKeys } : {}) });
 });
 
 export default router;

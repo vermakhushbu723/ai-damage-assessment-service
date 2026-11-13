@@ -694,6 +694,15 @@ try {
     check('accounts: password reset from the Super Admin works', (await post('/internal/portal-login', { identifier: 'USR-5001', password: 'Hari@54321', portal: 'callcenter' }, svc)).status === 200);
     check('accounts: unknown account -> 404', (await patch('/internal/accounts/NOPE-1', { status: 'Active' }, svc)).status === 404);
 
+    // Several roles from the Super Admin console
+    r = await post('/internal/accounts', { kind: 'user', id: 'USR-5003', name: 'Multi Role', email: 'multi@spni.in', roleKey: 'claim-handler', roleKeys: ['claim-handler', 'call-center'], password: 'Multi@12345', organization: 'SP Insurer' }, svc);
+    check('accounts: user with two roles', r.status === 201, JSON.stringify(r.data));
+    r = await post('/internal/portal-login', { identifier: 'USR-5003', password: 'Multi@12345', portal: 'callcenter' }, svc);
+    check('accounts: sign-in lists both roles', r.status === 200 && JSON.stringify(r.data).includes('call-center') && JSON.stringify(r.data).includes('claim-handler'), JSON.stringify(r.data).slice(0, 400));
+    r = await patch('/internal/accounts/USR-5003', { roleKeys: ['tct', 'sr-tct'] }, svc);
+    check('accounts: roles changed from the Super Admin', r.status === 200 && r.data.roleKeys?.join() === 'tct,sr-tct', JSON.stringify(r.data));
+    check('accounts: unknown role key -> 400', (await patch('/internal/accounts/USR-5003', { roleKeys: ['nope'] }, svc)).status === 400);
+
     // One organization's accounts (Super Admin > Organizations > view)
     check('org-members needs the service key', (await post('/internal/org-members', { adminIds: ['ORG-1001-ADM'] }, { token: null })).status === 401);
     check('org-members: nothing to look up -> 400', (await post('/internal/org-members', {}, svc)).status === 400);

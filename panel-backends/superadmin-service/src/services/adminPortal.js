@@ -40,11 +40,14 @@ async function call(method, path, body) {
  * organization's own admin) gets an Admin portal login, every other role a user account.
  * Returns { kind, id, portal } or null when admin-service is not connected.
  */
-export async function createPortalLogin({ id, name, email, phone, password, role, status, organization, branch, platform }) {
+/** admin-service role keys of Super Admin roles (unknown ones dropped). */
+export const roleKeysOf = (roles) => roles.map((r) => ROLE_KEYS[r]).filter(Boolean);
+
+export async function createPortalLogin({ id, name, email, phone, password, role, roles, status, organization, branch, platform }) {
     if (!adminPortalConnected()) return null;
     if (role === 'Admin') return call('POST', '/accounts', { kind: 'admin', id, name, email, mobile: phone ?? undefined, password });
     return call('POST', '/accounts', {
-        kind: 'user', id, name, email, mobile: phone ?? undefined, password, roleKey: ROLE_KEYS[role], status, organization, branch: branch ?? undefined, platform,
+        kind: 'user', id, name, email, mobile: phone ?? undefined, password, roleKey: ROLE_KEYS[role], roleKeys: roleKeysOf(roles ?? [role]), status, organization, branch: branch ?? undefined, platform,
     });
 }
 
