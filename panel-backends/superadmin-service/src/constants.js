@@ -6,7 +6,9 @@ export const ORG_STATUSES = ['Active', 'Pending', 'Suspended', 'Expired'];
 export const ID_TYPES = ['Pilot', 'Working'];
 export const SERVICE_MODELS = ['SaaS', 'Service Provider'];
 
-export const USER_ROLES = ['Manager', 'Surveyor', 'Admin', 'Claim Handler', 'Call Center', 'TCT', 'Sr TCT', 'National Manager'];
+// Every Admin portal role (admin-service role keys in services/adminPortal.js) + Admin (an organization admin login).
+// 'Manager' = Regional Manager, kept so users created before the rename still validate.
+export const USER_ROLES = [...['National Manager', 'Regional Manager', 'State Manager', 'Claim Handler', 'Call Center', 'Surveyor', 'Internal Surveyor', 'Investigator', 'TCT', 'Sr TCT', 'Audit'], 'Admin', 'Manager'];
 export const USER_STATUSES = ['Active', 'Pending', 'Inactive', 'Suspended'];
 export const PLATFORMS = ['Mobile', 'Web', 'Both'];
 

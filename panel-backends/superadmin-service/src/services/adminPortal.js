@@ -9,7 +9,12 @@ export const adminPortalConnected = () => Boolean(settings.adminServiceUrl && se
 
 /** Super Admin user roles -> admin-service role keys ("Admin" becomes an Admin portal login instead). */
 const ROLE_KEYS = {
-    Manager: 'regional-manager',
+    Manager: 'regional-manager', // old name of Regional Manager
+    'Regional Manager': 'regional-manager',
+    'State Manager': 'state-manager',
+    'Internal Surveyor': 'internal-surveyor',
+    Investigator: 'investigator',
+    Audit: 'audit',
     Surveyor: 'external-surveyor',
     'Claim Handler': 'claim-handler',
     'Call Center': 'call-center',
