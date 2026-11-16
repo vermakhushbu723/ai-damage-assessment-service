@@ -176,7 +176,7 @@ router.post(`${KIND_PATH}/report`, canKind(), (req, res) => {
 
 /**
  * POST /api/v1/claims/:id/(liability|fla)/submit -- "Submit Report". The net
- * liability becomes the claim amount; the FLA submit also completes the FLA step.
+ * liability becomes the claim amount and the step (Handler ILA / FLA) is completed.
  */
 router.post(`${KIND_PATH}/submit`, canKind('edit'), asyncHandler(async (req, res) => {
     const { kind } = req.params;
@@ -188,7 +188,7 @@ router.post(`${KIND_PATH}/submit`, canKind('edit'), asyncHandler(async (req, res
     transaction(() => {
         putDoc(row.id, kind, { ...doc, status: 'Submitted', submittedAt: nowIso(), submittedBy: actor.name, totals }, actor);
         setClaimFields(row.id, { amount: totals.netLiability });
-        if (kind === 'fla') completeStage(row.id, 'fla', actor);
+        completeStage(row.id, kind === 'fla' ? 'fla' : 'handler-ila', actor);
         audit(row.id, `${KINDS[kind].label} report submitted`, `Net liability ₹${inr(totals.netLiability)}`, actor);
     });
     await syncClaim(row.id);
@@ -332,7 +332,6 @@ router.post('/claims/:id/payment/submit', can(MODULES.payment, 'edit'), asyncHan
             dueDate: new Date(Date.now() + 24 * 3600_000).toISOString(),
         }, actor);
         setClaimFields(row.id, { amount: f.netPayable });
-        completeStage(row.id, 'payment-recommendation', actor);
         audit(row.id, 'Payment recommended', `₹${inr(allocated)} to ${input.payees.map((p) => p.payeeName).join(', ')}`, actor);
     });
     await syncClaim(row.id);
@@ -356,6 +355,7 @@ async function paybillState(row, user) {
     const generatedAt = saved?.generatedAt ?? null;
     return {
         assigned: !!assignment,
+        // Service Provider: the fee bill does not need a surveyor; with one assigned, the survey details show.
         survey: assignment ? [
             { key: 'surveyorName', label: 'Surveyor Name', value: assignment.surveyorName },
             { key: 'surveyorId', label: 'Surveyor ID', value: assignment.surveyorCode ?? assignment.surveyorId },
@@ -365,11 +365,16 @@ async function paybillState(row, user) {
             { key: 'surveyMode', label: 'Survey Mode', value: 'Physical Survey' },
             { key: 'claimHandler', label: 'Claim Handler', value: row.handler_name ? `${row.handler_name} (${row.handler_id})` : '—' },
             { key: 'distance', label: 'Distance Travelled', value: `${lines.find((l) => l.key === 'distance').qty} KMs` },
-        ] : [],
+        ] : [
+            { key: 'serviceProvider', label: 'Survey By', value: 'IBima Assist (Service Provider)' },
+            { key: 'surveyLocation', label: 'Survey Location', value: [row.city, row.state].filter(Boolean).join(', ') || '—' },
+            { key: 'claimHandler', label: 'Claim Handler', value: row.handler_name ? `${row.handler_name} (${row.handler_id})` : '—' },
+            { key: 'distance', label: 'Distance Travelled', value: `${lines.find((l) => l.key === 'distance').qty} KMs` },
+        ],
         bill: [
             { key: 'billNo', label: 'Bill No:', value: `BILL/${row.claim_no.slice(4, 8)}/${seq}` },
             { key: 'billDate', label: 'Bill Date', value: fmtDate(generatedAt ?? nowIso()) },
-            { key: 'billingPeriod', label: 'Billing Period', value: assignment ? `${fmtDate(assignment.assignedAt)} - ${fmtDate(generatedAt ?? nowIso())}` : '—' },
+            { key: 'billingPeriod', label: 'Billing Period', value: `${fmtDate(assignment?.assignedAt ?? row.submitted_at ?? row.created_at)} - ${fmtDate(generatedAt ?? nowIso())}` },
             { key: 'billTo', label: 'Bill To (Insurance Company)', value: user?.organization ?? '—' },
             { key: 'billingAddress', label: 'Billing Address', value: [user?.organization, user?.branch].filter(Boolean).join(',\n') || '—' },
         ],
@@ -428,7 +433,6 @@ router.post('/claims/:id/paybill/pdf', can(MODULES.paybill, 'edit'), asyncHandle
     const saved = getDoc(row.id, 'paybill');
     const input = req.body?.lines ? cleanPaybill(req.body) : {};
     const actor = actorOf(req);
-    if (!activeAssignment(row.id, 'final') && !activeAssignment(row.id, 'spot')) throw badRequest('No surveyor is assigned to this claim.');
     putDoc(row.id, 'paybill', { ...(saved ?? {}), ...input, status: 'Generated', generatedAt: nowIso(), generatedBy: actor.name }, actor);
     const s = await paybillState(findClaimRow(row.id), req.user);
     transaction(() => {

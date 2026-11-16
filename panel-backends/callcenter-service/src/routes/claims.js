@@ -573,7 +573,7 @@ router.get('/claims/:id/details', can(MODULES.details), (req, res) => {
     res.json({ values, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
 });
 
-/** PUT /api/v1/claims/:id/details { values, complete? } -- "Save Draft"; complete=true from "Next". */
+/** PUT /api/v1/claims/:id/details { values, complete? } -- "Save Draft" / "Next" (Claim Details is a screen, not a journey step). */
 router.put('/claims/:id/details', can(MODULES.details, 'edit'), (req, res) => {
     const row = loadClaim(req);
     if (row.status === 'Draft') throw badRequest('Submit the intimation first.');
@@ -582,7 +582,6 @@ router.put('/claims/:id/details', can(MODULES.details, 'edit'), (req, res) => {
     const saved = transaction(() => {
         const doc = putDoc(row.id, 'details', { values }, actor);
         audit(row.id, 'Claim details saved', `${Object.keys(values).length} fields`, actor);
-        if (req.body?.complete) completeStage(row.id, 'claim-details', actor);
         return doc;
     });
     if (req.body?.complete) syncClaim(row.id).catch(() => {});

@@ -3,19 +3,18 @@
 // anything the screens could not have sent.
 
 /**
- * Claim journey, in order. A claim's `stage` is the next step still to do.
- * Service Provider journey (Super Admin > Workflow): no Surveyor Assignment step --
- * Handler Allocation is followed by Claim Details. Surveyors can still be assigned
- * (Surveyor Assignment screen, e.g. for the Survey Paybill) but that is not a step.
+ * Claim journey, in order (Service Provider): Intimation -> Handler Allocation ->
+ * AI ILA -> Handler ILA -> FLA -> Survey Fee Bill. A claim's `stage` is the next
+ * step still to do. Claim Details, Surveyor Assignment and Payment Recommendation
+ * are still screens (documents, a surveyor, a payment approval) but not steps.
  */
 export const STAGES = [
     { key: 'intimation', label: 'Intimation' },
     { key: 'handler-allocation', label: 'Handler Allocation' },
-    { key: 'claim-details', label: 'Claim Details' },
     { key: 'ai-ila', label: 'AI ILA' },
+    { key: 'handler-ila', label: 'Handler ILA' },
     { key: 'fla', label: 'FLA' },
-    { key: 'payment-recommendation', label: 'Payment Recommendation' },
-    { key: 'survey-paybill', label: 'Survey Paybill' },
+    { key: 'survey-paybill', label: 'Survey Fee Bill' },
 ];
 export const STAGE_KEYS = STAGES.map((s) => s.key);
 export const COMPLETED = 'completed';
@@ -25,11 +24,9 @@ export const stageLabel = (key) => STAGES.find((s) => s.key === key)?.label ?? (
 export const ADMIN_STAGE = {
     intimation: 'Intimation',
     'handler-allocation': 'Intimation',
-    'surveyor-assignment': 'Intimation',
-    'claim-details': 'Survey',
     'ai-ila': 'AI ILA',
+    'handler-ila': 'ILA',
     fla: 'ILA',
-    'payment-recommendation': 'FLA',
     'survey-paybill': 'FLA',
     [COMPLETED]: 'Settled',
 };
@@ -40,10 +37,12 @@ export const ADMIN_CLAIM_TYPE = { 'Private Car': 'Motor Vehicle', 'Two Wheeler':
 /** Admin portal regions (North/East/West/South/Central) by state. */
 export const REGION_OF_STATE = {
     Delhi: 'North', 'Uttar Pradesh': 'North', Haryana: 'North', Punjab: 'North', Rajasthan: 'North', Uttarakhand: 'North',
-    'Himachal Pradesh': 'North', 'Jammu and Kashmir': 'North', Chandigarh: 'North',
-    Maharashtra: 'West', Gujarat: 'West', Goa: 'West',
+    'Himachal Pradesh': 'North', 'Jammu and Kashmir': 'North', Ladakh: 'North', Chandigarh: 'North',
+    Maharashtra: 'West', Gujarat: 'West', Goa: 'West', 'Dadra and Nagar Haveli and Daman and Diu': 'West',
     Karnataka: 'South', 'Tamil Nadu': 'South', Kerala: 'South', Telangana: 'South', 'Andhra Pradesh': 'South', Puducherry: 'South',
-    'West Bengal': 'East', Odisha: 'East', Bihar: 'East', Jharkhand: 'East', Assam: 'East',
+    Lakshadweep: 'South', 'Andaman and Nicobar Islands': 'South',
+    'West Bengal': 'East', Odisha: 'East', Bihar: 'East', Jharkhand: 'East', Assam: 'East', Sikkim: 'East', 'Arunachal Pradesh': 'East',
+    Manipur: 'East', Meghalaya: 'East', Mizoram: 'East', Nagaland: 'East', Tripura: 'East',
     'Madhya Pradesh': 'Central', Chhattisgarh: 'Central',
 };
 

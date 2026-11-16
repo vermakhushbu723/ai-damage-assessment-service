@@ -19,9 +19,12 @@ export const DEPARTMENTS = ['Claims', 'Motor Claims', 'Customer Service', 'Surve
 export const ZONES = ['North', 'South', 'East', 'West', 'Central', 'Pan India'];
 export const COUNTRIES = ['India'];
 export const PLATFORMS = ['mobile', 'web', 'both'];
+// Every State / UT (same list as the portals' data/indiaLocations.js).
 export const STATES = [
-    'Andhra Pradesh', 'Bihar', 'Chhattisgarh', 'Delhi', 'Goa', 'Gujarat', 'Haryana', 'Karnataka', 'Kerala',
-    'Madhya Pradesh', 'Maharashtra', 'Odisha', 'Punjab', 'Rajasthan', 'Tamil Nadu', 'Telangana',
+    'Andaman and Nicobar Islands', 'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chandigarh', 'Chhattisgarh',
+    'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jammu and Kashmir',
+    'Jharkhand', 'Karnataka', 'Kerala', 'Ladakh', 'Lakshadweep', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya',
+    'Mizoram', 'Nagaland', 'Odisha', 'Puducherry', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura',
     'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
 ];
 export const DEFAULT_CAPACITY = 100;

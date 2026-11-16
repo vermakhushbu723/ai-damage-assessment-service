@@ -248,12 +248,12 @@ try {
     check('gateway received both messages', sent.filter((m) => m.claimNo === claimNo).length === 2 && sent.some((m) => m.channel === 'Email' && m.to === 'amit.verma@test.in'));
 
     r = await AG2.post(`/claims/${claimId}/submit`, { intimation: intimation() });
-    check('submit -> Open, pushed to Admin, handler auto-allocated by the Admin rule, next step Claim Details', r.status === 200 && r.data.status === 'Open' && r.data.sync.pushedToAdmin && !!r.data.handlerId && r.data.stage === 'claim-details', r.data); // Service Provider: no Surveyor Assignment step
+    check('submit -> Open, pushed to Admin, handler auto-allocated by the Admin rule, next step AI ILA', r.status === 200 && r.data.status === 'Open' && r.data.sync.pushedToAdmin && !!r.data.handlerId && r.data.stage === 'ai-ila', r.data); // Service Provider: Handler Allocation -> AI ILA
     const firstHandler = r.data.handlerId;
     check('stage tracker: intimation + handler allocation done', r.data.stages.filter((s) => s.done).map((s) => s.key).join() === 'intimation,handler-allocation', r.data.stages);
     check('submit twice -> 409', (await AG2.post(`/claims/${claimId}/submit`)).status === 409);
     r = await A.get(`/claims/${claimNo}`);
-    check('Admin portal has the claim with the same handler (Claim Details = Admin stage Survey)', r.status === 200 && r.data.handlerId === firstHandler && r.data.stage === 'Survey' && r.data.customer === 'Amit Verma', r.data);
+    check('Admin portal has the claim with the same handler (Admin stage AI ILA)', r.status === 200 && r.data.handlerId === firstHandler && r.data.stage === 'AI ILA' && r.data.customer === 'Amit Verma', r.data);
     check('Admin portal gets the Service Provider journey (claim.sp)', r.data.sp?.stage === 'AI ILA' && r.data.sp.linkSent === true
         && r.data.sp.aiIla === 'Pending' && r.data.sp.handlerIla === 'Pending' && r.data.sp.docsPending === 5 && r.data.sp.feeBill === null, r.data.sp);
     r = await A.get('/comm-logs');
@@ -303,7 +303,7 @@ try {
     r = await H.post(`/claims/${claimId}/surveyors/${spotId}/cancel`);
     check('cancel assignment', r.status === 200 && r.data.assignments.spot === null && r.data.history[0].action === 'Assignment Cancelled', r.data);
     r = await H.post(`/claims/${claimId}/surveyors`, { surveyType: 'final', surveyorId: sv.id });
-    check('assign final surveyor (not a journey step: stage stays Claim Details)', r.status === 201 && r.data.claim.stage === 'claim-details' && !r.data.claim.stages.some((s) => s.key === 'surveyor-assignment'), r.data);
+    check('assign final surveyor (not a journey step: stage stays AI ILA)', r.status === 201 && r.data.claim.stage === 'ai-ila' && !r.data.claim.stages.some((s) => s.key === 'surveyor-assignment'), r.data);
 
     // ---------- claim details ----------
     r = await H.get(`/claims/${claimId}/details`);
@@ -312,9 +312,10 @@ try {
     check('bad driver contact -> 400', (await H.put(`/claims/${claimId}/details`, { values: { driverContact: '123' } })).status === 400);
     r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values, odometer: '45000', bodyType: 'hatchback', driverName: 'Amit Kumar', driverContact: '+91 98765 43210', partsDamage: ['Front Bumper', 'Bonnet'], primaryDriver: 'Yes' } });
     check('driver / loss fields saved (tags list kept)', r.status === 200 && r.data.values.driverContact === '9876543210' && r.data.values.partsDamage.length === 2, r.data);
-    check('Save Draft', r.status === 200 && r.data.values.odometer === '45000' && !r.data.claim.stages.find((s) => s.key === 'claim-details').done);
+    check('Save Draft', r.status === 200 && r.data.values.odometer === '45000' && !r.data.claim.stages.some((s) => s.key === 'claim-details'));
     r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values }, complete: true });
-    check('Next completes Claim Details', r.data.claim.stage === 'ai-ila', r.data.claim?.stage);
+    check('journey steps: Intimation > Handler Allocation > AI ILA > Handler ILA > FLA > Survey Fee Bill', r.data.claim.stages.map((s) => s.label).join(' > ') === 'Intimation > Handler Allocation > AI ILA > Handler ILA > FLA > Survey Fee Bill', r.data.claim.stages.map((s) => s.label));
+    check('Claim Details Next saves, stage stays AI ILA', r.data.claim.stage === 'ai-ila', r.data.claim?.stage);
     r = await H.get(`/claims/${claimId}/info`);
     check('Claim Information prefilled (claim, survey, vehicle, insured)', r.data.values.claimNumber === claimNo && r.data.values.finalSurveyorName === 'Suresh Sharma' && r.data.values.registrationNumber === 'DL 01 AB 1234' && r.data.values.driverName === 'Amit Kumar', r.data.values);
     r = await H.put(`/claims/${claimId}/info`, { values: { ...r.data.values, ncbStatus: '20%', investigationRequired: 'No' } });
@@ -382,7 +383,7 @@ try {
     raw = await H.raw('GET', `/claims/${claimId}/ai-ila/export.csv`);
     check('Export CSV', raw.status === 200 && raw.buf.toString().split('\n').length === 6);
     r = await H.post(`/claims/${claimId}/ai-ila/decision`, { decision: 'Approved' });
-    check('Approve AI -> stage FLA, corrections sent to retraining', r.status === 200 && r.data.claim.stage === 'fla' && corrections.length >= 1 && r.data.review.decision === 'Approved', { stage: r.data?.claim?.stage, corrections: corrections.length });
+    check('Approve AI -> stage Handler ILA, corrections sent to retraining', r.status === 200 && r.data.claim.stage === 'handler-ila' && corrections.length >= 1 && r.data.review.decision === 'Approved', { stage: r.data?.claim?.stage, corrections: corrections.length });
     check('approved assessment is locked', (await H.patch(`/claims/${claimId}/ai-ila/items/${rows[0].id}`, { cost: 1 })).status === 409);
     check('Admin portal stage AI ILA -> ILA', (await A.get(`/claims/${claimNo}`)).data.stage === 'ILA');
 
@@ -399,7 +400,7 @@ try {
     check('Generate Report -> PDF', raw.status === 200 && raw.buf.subarray(0, 5).toString() === '%PDF-');
     check('payment needs the FLA first', (await H.post(`/claims/${claimId}/payment/submit`)).status === 400);
     r = await H.post(`/claims/${claimId}/liability/submit`);
-    check('Handler ILA submitted (FLA step still open)', r.status === 200 && r.data.status === 'Submitted' && (await H.get(`/claims/${claimId}`)).data.stage === 'fla', r.data);
+    check('Handler ILA submitted -> step done, stage FLA', r.status === 200 && r.data.status === 'Submitted' && (await H.get(`/claims/${claimId}`)).data.stage === 'fla', r.data);
     const handlerNet = r.data.totals.netLiability;
     check('submitted Handler ILA is locked', (await H.post(`/claims/${claimId}/liability/parts`, { part: 'X part', material: 'Metal', action: 'Repair', allowed: 'Allowed' })).status === 409);
 
@@ -411,7 +412,7 @@ try {
     raw = await H.raw('POST', `/claims/${claimId}/fla/report`);
     check('FLA report PDF', raw.status === 200 && raw.headers.get('content-disposition').includes('FLA-'));
     r = await H.post(`/claims/${claimId}/fla/submit`);
-    check('FLA submit -> stage payment', r.status === 200 && (await H.get(`/claims/${claimId}`)).data.stage === 'payment-recommendation');
+    check('FLA submit -> stage Survey Fee Bill', r.status === 200 && (await H.get(`/claims/${claimId}`)).data.stage === 'survey-paybill');
     const net = r.data.totals.netLiability;
 
     // ---------- payment recommendation ----------

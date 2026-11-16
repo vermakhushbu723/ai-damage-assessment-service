@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { settings } from '../config.js';
+import { STAGE_KEYS, COMPLETED } from '../constants.js';
 
 mkdirSync(dirname(settings.databaseFile), { recursive: true });
 // The file was called callcenter.db before it got the ServiceProvider name; an
@@ -184,8 +185,28 @@ db.exec(`
     );
 `);
 
-// Surveyor Assignment is no longer a journey step: claims waiting on it move on to Claim Details.
-db.exec("UPDATE claims SET stage = 'claim-details' WHERE stage = 'surveyor-assignment'");
+// Journey = STAGE_KEYS (Service Provider). Older claims: a submitted Handler ILA marks
+// the Handler ILA step done, and every open claim's stage is recomputed as the first
+// step not done yet (same rule as completeStage), e.g. Claim Details -> AI ILA,
+// Payment Recommendation -> Survey Fee Bill. Idempotent, runs at start-up.
+{
+    const missingHandlerIla = db.prepare(`SELECT d.claim_id, d.updated_at, d.updated_by FROM claim_docs d
+        WHERE d.key = 'liability' AND json_extract(d.data, '$.status') = 'Submitted'
+          AND NOT EXISTS (SELECT 1 FROM events e WHERE e.claim_id = d.claim_id AND e.kind = 'stage' AND e.action = 'handler-ila')`).all();
+    const addStage = db.prepare("INSERT INTO events (claim_id, kind, action, detail, data, actor_id, actor_name, at) VALUES (?, 'stage', 'handler-ila', 'Handler ILA completed', '{}', NULL, ?, ?)");
+    for (const r of missingHandlerIla) addStage.run(r.claim_id, r.updated_by ?? 'System', r.updated_at);
+    const doneOf = db.prepare("SELECT DISTINCT action FROM events WHERE claim_id = ? AND kind = 'stage'");
+    const setStage = db.prepare('UPDATE claims SET stage = ? WHERE id = ?');
+    const close = db.prepare("UPDATE claims SET status = 'Closed' WHERE id = ?");
+    for (const c of db.prepare("SELECT id, stage FROM claims WHERE stage <> ?").all(COMPLETED)) {
+        const done = new Set(doneOf.all(c.id).map((r) => r.action));
+        const next = STAGE_KEYS.find((k) => !done.has(k)) ?? COMPLETED;
+        if (next !== c.stage) {
+            setStage.run(next, c.id);
+            if (next === COMPLETED) close.run(c.id);
+        }
+    }
+}
 
 export const nowIso = () => new Date().toISOString();
 

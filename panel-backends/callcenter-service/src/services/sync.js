@@ -35,11 +35,9 @@ function spDetails(row) {
     const stage = {
         intimation: 'Intimation',
         'handler-allocation': 'Handler Allocation',
-        'surveyor-assignment': 'AI ILA', // no surveyor step for a Service Provider: handler allocated, AI ILA next
-        'claim-details': 'AI ILA',
         'ai-ila': 'AI ILA',
-        fla: handlerIla === 'Completed' ? 'FLA' : 'Handler ILA',
-        'payment-recommendation': 'Fee Bill',
+        'handler-ila': 'Handler ILA',
+        fla: 'FLA',
         'survey-paybill': 'Fee Bill',
         [COMPLETED]: 'DMS',
     }[row.stage] ?? 'Intimation';
