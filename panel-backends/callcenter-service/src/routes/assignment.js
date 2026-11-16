@@ -269,7 +269,7 @@ router.post('/claims/:id/surveyors', can(MODULES.surveyor, 'edit'), asyncHandler
             createdBy: actor.id,
         });
         audit(row.id, 'Surveyor assigned', `${SURVEY_TYPES[surveyType]} · ${s.name}`, actor);
-        completeStage(row.id, 'surveyor-assignment', actor);
+        // Not a journey step for a Service Provider: the claim's stage does not move.
     });
     await syncClaim(row.id);
     res.status(201).json({ ...surveyorState(row.id), claim: toClaim(findClaimRow(row.id)) });

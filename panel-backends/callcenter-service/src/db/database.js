@@ -184,6 +184,9 @@ db.exec(`
     );
 `);
 
+// Surveyor Assignment is no longer a journey step: claims waiting on it move on to Claim Details.
+db.exec("UPDATE claims SET stage = 'claim-details' WHERE stage = 'surveyor-assignment'");
+
 export const nowIso = () => new Date().toISOString();
 
 /** Runs fn inside BEGIN/COMMIT; rolls back on any error. */

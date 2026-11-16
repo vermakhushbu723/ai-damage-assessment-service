@@ -2,11 +2,15 @@
 // (car-damage-insurance-callcenter/src/config + src/data) so the API rejects
 // anything the screens could not have sent.
 
-/** Claim journey, in order. A claim's `stage` is the next step still to do. */
+/**
+ * Claim journey, in order. A claim's `stage` is the next step still to do.
+ * Service Provider journey (Super Admin > Workflow): no Surveyor Assignment step --
+ * Handler Allocation is followed by Claim Details. Surveyors can still be assigned
+ * (Surveyor Assignment screen, e.g. for the Survey Paybill) but that is not a step.
+ */
 export const STAGES = [
     { key: 'intimation', label: 'Intimation' },
     { key: 'handler-allocation', label: 'Handler Allocation' },
-    { key: 'surveyor-assignment', label: 'Surveyor Assignment' },
     { key: 'claim-details', label: 'Claim Details' },
     { key: 'ai-ila', label: 'AI ILA' },
     { key: 'fla', label: 'FLA' },

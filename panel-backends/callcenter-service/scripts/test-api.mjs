@@ -248,12 +248,12 @@ try {
     check('gateway received both messages', sent.filter((m) => m.claimNo === claimNo).length === 2 && sent.some((m) => m.channel === 'Email' && m.to === 'amit.verma@test.in'));
 
     r = await AG2.post(`/claims/${claimId}/submit`, { intimation: intimation() });
-    check('submit -> Open, pushed to Admin, handler auto-allocated by the Admin rule', r.status === 200 && r.data.status === 'Open' && r.data.sync.pushedToAdmin && !!r.data.handlerId && r.data.stage === 'surveyor-assignment', r.data);
+    check('submit -> Open, pushed to Admin, handler auto-allocated by the Admin rule, next step Claim Details', r.status === 200 && r.data.status === 'Open' && r.data.sync.pushedToAdmin && !!r.data.handlerId && r.data.stage === 'claim-details', r.data); // Service Provider: no Surveyor Assignment step
     const firstHandler = r.data.handlerId;
     check('stage tracker: intimation + handler allocation done', r.data.stages.filter((s) => s.done).map((s) => s.key).join() === 'intimation,handler-allocation', r.data.stages);
     check('submit twice -> 409', (await AG2.post(`/claims/${claimId}/submit`)).status === 409);
     r = await A.get(`/claims/${claimNo}`);
-    check('Admin portal has the claim with the same handler', r.status === 200 && r.data.handlerId === firstHandler && r.data.stage === 'Intimation' && r.data.customer === 'Amit Verma', r.data);
+    check('Admin portal has the claim with the same handler (Claim Details = Admin stage Survey)', r.status === 200 && r.data.handlerId === firstHandler && r.data.stage === 'Survey' && r.data.customer === 'Amit Verma', r.data);
     check('Admin portal gets the Service Provider journey (claim.sp)', r.data.sp?.stage === 'AI ILA' && r.data.sp.linkSent === true
         && r.data.sp.aiIla === 'Pending' && r.data.sp.handlerIla === 'Pending' && r.data.sp.docsPending === 5 && r.data.sp.feeBill === null, r.data.sp);
     r = await A.get('/comm-logs');
@@ -303,7 +303,7 @@ try {
     r = await H.post(`/claims/${claimId}/surveyors/${spotId}/cancel`);
     check('cancel assignment', r.status === 200 && r.data.assignments.spot === null && r.data.history[0].action === 'Assignment Cancelled', r.data);
     r = await H.post(`/claims/${claimId}/surveyors`, { surveyType: 'final', surveyorId: sv.id });
-    check('assign final surveyor', r.status === 201 && r.data.claim.stages.find((s) => s.key === 'surveyor-assignment').done, r.data);
+    check('assign final surveyor (not a journey step: stage stays Claim Details)', r.status === 201 && r.data.claim.stage === 'claim-details' && !r.data.claim.stages.some((s) => s.key === 'surveyor-assignment'), r.data);
 
     // ---------- claim details ----------
     r = await H.get(`/claims/${claimId}/details`);
