@@ -194,17 +194,25 @@ try {
     const AG2 = api(CC, r.data.token);
     check('agent cannot open Handler Allocation -> 403', (await AG2.get('/handlers')).status === 403);
     // ---------- website common login: POST /auth/sign-in finds the portal ----------
+    // Website login: User ID or full name only (not email / mobile).
     r = await pub.post('/auth/sign-in', { identifier: SA_EMAIL, password: SA_PW });
+    check('sign-in: email is not accepted on the website -> 401 with a hint', r.status === 401 && /User ID or full name/.test(r.data.detail), r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'Super Admin', password: SA_PW });
+    check('sign-in: super admin by full name', r.status === 200 && r.data.portal === 'superadmin', r.data);
+    const saId = r.data.admin?.id;
+    r = await pub.post('/auth/sign-in', { identifier: saId, password: SA_PW });
     check('sign-in: super admin -> portal superadmin + its token', r.status === 200 && r.data.portal === 'superadmin' && !!r.data.admin?.id && (await call(SA_BASE, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
-    r = await pub.post('/auth/sign-in', { identifier: 'admin@test.in', password: ADMIN_PW });
-    check('sign-in: admin portal admin -> portal admin + its token', r.status === 200 && r.data.portal === 'admin' && !!r.data.admin?.id && (await call(ADMIN, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'admin', password: ADMIN_PW });
+    check('sign-in: admin portal admin by full name (case-insensitive) -> portal admin + its token', r.status === 200 && r.data.portal === 'admin' && !!r.data.admin?.id && (await call(ADMIN, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
     r = await pub.post('/auth/sign-in', { identifier: '9876543210', password: ADMIN_PW });
-    check('sign-in: admin by mobile number', r.status === 200 && r.data.portal === 'admin', r.data);
+    check('sign-in: mobile number is not accepted on the website -> 401', r.status === 401, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'Karan Mehta', password: 'Karan@2026' });
+    check('sign-in: portal user by full name', r.status === 200 && r.data.portal === 'claim' && r.data.user.userId === 'karan.cc', r.data);
     r = await pub.post('/auth/sign-in', { identifier: 'karan.cc', password: 'Karan@2026' });
     check('sign-in: portal user -> portal claim, call center token works here', r.status === 200 && r.data.portal === 'claim' && r.data.user.roleKey === 'call-center' && (await api(CC, r.data.token).get('/auth/me')).status === 200, r.data);
     r = await pub.post('/auth/sign-in', { identifier: 'nobody.at.all', password: 'Whatever@1' });
     check('sign-in: unknown name -> 401, same message as a wrong password', r.status === 401 && r.data.detail === 'Invalid user ID or password.', r.data);
-    r = await pub.post('/auth/sign-in', { identifier: SA_EMAIL, password: 'Wrong@1234' });
+    r = await pub.post('/auth/sign-in', { identifier: saId, password: 'Wrong@1234' });
     check('sign-in: wrong super admin password -> 401 from that console', r.status === 401 && !/service key/i.test(r.data.detail), r.data);
     r = await pub.post('/auth/sign-in', { identifier: 'karan.cc', password: 'Wrong@1234' });
     check('sign-in: wrong portal user password -> 401 with attempts left', r.status === 401 && /attempt/.test(r.data.detail), r.data);

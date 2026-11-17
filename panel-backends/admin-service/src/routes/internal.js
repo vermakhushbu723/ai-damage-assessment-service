@@ -254,13 +254,21 @@ router.post('/org-members', (req, res) => {
 });
 
 /**
- * POST /api/v1/internal/identify { identifier } -> { kind: 'admin' | 'user' | null }
- * Which kind of account a sign-in name belongs to (website common login).
+ * POST /api/v1/internal/identify { identifier }
+ *   -> { kind: 'admin' | 'user' | null, loginId, names: [{ kind, loginId }] }
+ * Which account a sign-in name belongs to (website common login): by login ID
+ * (kind + loginId), and the accounts whose full name is exactly this (names).
  */
 router.post('/identify', (req, res) => {
     const identifier = String(req.body?.identifier ?? '').trim();
     if (!identifier) throw badRequest('identifier is required.');
-    res.json({ kind: findAdminRowByIdentifier(identifier) ? 'admin' : findUserRowByLogin(identifier) ? 'user' : null });
+    const admin = findAdminRowByIdentifier(identifier);
+    const user = admin ? null : findUserRowByLogin(identifier);
+    const names = [
+        ...db.prepare('SELECT id FROM admins WHERE lower(trim(name)) = lower(?)').all(identifier).map((r) => ({ kind: 'admin', loginId: r.id })),
+        ...db.prepare('SELECT user_id FROM users WHERE lower(trim(name)) = lower(?)').all(identifier).map((r) => ({ kind: 'user', loginId: r.user_id })),
+    ];
+    res.json({ kind: admin ? 'admin' : user ? 'user' : null, loginId: admin?.id ?? user?.user_id ?? null, names });
 });
 
 /** GET /api/v1/internal/triggers?open=1 -- fraud triggers of every claim (call center approver dashboard). */

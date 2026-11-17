@@ -4,7 +4,7 @@ import { signToken } from '../utils/jwt.js';
 import { asyncHandler, badRequest, HttpError } from '../utils/http.js';
 import { authenticate, rolesOf, withRole } from '../middleware/authenticate.js';
 import { portalLogin, portalLogout, changePassword, forgetUser, getUser } from '../services/adminClient.js';
-import { accountKind, forwardLogin } from '../services/signIn.js';
+import { forwardLogin, isEmailOrMobile, resolveAccount } from '../services/signIn.js';
 import { MODULES } from '../constants.js';
 
 // Sign-in with the account created in Admin > Create Users. admin-service
@@ -43,6 +43,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
 /**
  * POST /api/v1/auth/sign-in { identifier, password } -- the website's common login.
+ * identifier = User ID, or the full name when exactly one account has it (no email / mobile).
  * Finds which portal the account belongs to and signs in there only, so a wrong
  * password counts against that one account:
  *   -> { portal: 'superadmin' | 'admin', ...that backend's login response }
@@ -52,11 +53,14 @@ router.post('/sign-in', asyncHandler(async (req, res) => {
     const identifier = String(req.body?.identifier ?? '').trim();
     const password = String(req.body?.password ?? '');
     if (!identifier || !password) throw badRequest('Enter your User ID and password.');
-    const kind = await accountKind(identifier, req);
-    if (kind === 'superadmin' || kind === 'admin') return res.json({ portal: kind, ...(await forwardLogin(kind, identifier, password, req)) });
+    // Website login: User ID or full name only (not email / mobile number).
+    if (isEmailOrMobile(identifier)) throw new HttpError(401, 'Sign in with your User ID or full name (not email or mobile number).');
+    const account = await resolveAccount(identifier, req);
+    const kind = account?.kind;
+    if (kind === 'superadmin' || kind === 'admin') return res.json({ portal: kind, ...(await forwardLogin(kind, account.loginId, password, req)) });
     // Unknown names get the same answer as a wrong password: no hint which accounts exist.
     if (kind !== 'user') throw new HttpError(401, 'Invalid user ID or password.');
-    const { user } = await portalLogin(identifier, password, req);
+    const { user } = await portalLogin(account.loginId, password, req);
     forgetUser(user.id);
     return res.json({ portal: 'claim', ...session(user) });
 }));

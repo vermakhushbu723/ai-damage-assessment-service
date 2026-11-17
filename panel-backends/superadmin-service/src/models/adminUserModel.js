@@ -23,10 +23,15 @@ export const findAdminById = (id) => toAdminDto(findAdminRowById(id));
 export function findAdminRowByIdentifier(identifier) {
     const value = String(identifier ?? '').trim();
     if (value.includes('@')) return db.prepare('SELECT * FROM admin_users WHERE lower(email) = lower(?)').get(value);
+    const byId = value ? db.prepare('SELECT * FROM admin_users WHERE lower(id) = lower(?)').get(value) : undefined;
+    if (byId) return byId;
     const phone = normalizePhone(value);
     if (!phone) return undefined;
     return db.prepare('SELECT * FROM admin_users').all().find((r) => normalizePhone(r.phone) === phone);
 }
+
+/** IDs of the console admins with exactly this name (case-insensitive) -- website login by name. */
+export const adminIdsByName = (name) => db.prepare('SELECT id FROM admin_users WHERE lower(trim(name)) = lower(trim(?))').all(String(name ?? '')).map((r) => r.id);
 
 export const emailTaken = (email, exceptId = '') =>
     Boolean(db.prepare('SELECT 1 FROM admin_users WHERE lower(email) = lower(?) AND id <> ?').get(email, exceptId));

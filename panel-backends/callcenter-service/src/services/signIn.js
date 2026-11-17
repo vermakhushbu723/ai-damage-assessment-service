@@ -20,14 +20,33 @@ async function post(base, path, body, req, headers = {}) {
     }
 }
 
-/** 'superadmin' | 'admin' | 'user' | null for a sign-in name (email, mobile or user ID). */
-export async function accountKind(identifier, req) {
+/** Email addresses and mobile numbers are not sign-in names on the website (User ID or full name only). */
+export const isEmailOrMobile = (value) => value.includes('@') || /^\+?[\d\s-]{10,15}$/.test(value);
+
+/**
+ * The account a website sign-in name belongs to: { kind: 'superadmin' | 'admin' | 'user', loginId } or null.
+ * A User ID wins (Super Admin console first); otherwise the full name, when exactly one
+ * account has it. Several accounts with that name -> 409 (sign in with the User ID).
+ */
+export async function resolveAccount(identifier, req) {
+    let saNames = [];
     if (settings.superadminServiceUrl && settings.superadminServiceKey) {
         const res = await post(settings.superadminServiceUrl, '/internal/identify', { identifier }, req, { 'X-Service-Key': settings.superadminServiceKey });
         if (!res.ok) throw new HttpError(503, 'Super Admin sign-in is not available right now. Try again in a moment.');
-        if ((await res.json()).exists) return 'superadmin';
+        const sa = await res.json();
+        if (sa.exists) return { kind: 'superadmin', loginId: sa.loginId ?? identifier };
+        saNames = (sa.names ?? []).map((id) => ({ kind: 'superadmin', loginId: id }));
     }
-    return (await identifyAccount(identifier, req)).kind ?? null;
+    const ad = await identifyAccount(identifier, req);
+    if (ad.kind) return { kind: ad.kind, loginId: ad.loginId ?? identifier };
+    const byName = [...saNames, ...(ad.names ?? [])];
+    if (byName.length > 1) throw new HttpError(409, 'More than one account has this name. Sign in with your User ID.');
+    return byName[0] ?? null;
+}
+
+/** 'superadmin' | 'admin' | 'user' | null for a sign-in name. */
+export async function accountKind(identifier, req) {
+    return (await resolveAccount(identifier, req))?.kind ?? null;
 }
 
 /** POSTs the credentials to that portal's own /auth/login; its 4xx reason (wrong password, locked) goes to the user as-is. */

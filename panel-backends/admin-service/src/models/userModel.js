@@ -50,6 +50,7 @@ function toUser(row, counts, { withImage = false } = {}) {
             capacityLimit,
         },
         mustChangePassword: !!row.must_change_password,
+        lastLoginAt: row.last_login_at ?? null,
         passwordResetAt: row.password_reset_at,
         lastResetLinkAt: row.last_reset_link_at,
         createdAt: row.created_at,
