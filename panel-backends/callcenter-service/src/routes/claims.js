@@ -613,10 +613,12 @@ function infoFromClaim(row) {
         // Loss
         dateOfLoss: i.dateOfIncident, timeOfLoss: clockTime(i.timeOfIncident),
         lossLocation: [i.incidentArea, i.incidentCity].filter(Boolean).join(', ') || undefined,
+        lossState: i.incidentState, lossCity: i.incidentCity, lossPincode: i.incidentPincode,
         causeOfLoss: d.causeOfAccident ?? i.natureOfLoss, lossInfoDescription: d.lossDescription ?? i.briefDescription,
         firDdrNumber: i.firNo, policeStation: i.policeStation, thirdPartyInvolvement: yesNo(i.thirdPartyInvolved),
         // Workshop
         workshopName: i.workshopName, workshopAddress: i.workshopAddress, workshopContactPerson: i.contactPersonName,
+        workshopState: i.workshopState, workshopCity: i.workshopCity, workshopPincode: i.workshopPincode,
         // Driver
         driverName: d.driverName ?? i.driverName, driverContactNumber: d.driverContact,
         driverLicenseNumber: d.driverLicenseNumber ?? i.drivingLicenseNumber,

@@ -194,20 +194,20 @@ try {
     const AG2 = api(CC, r.data.token);
     check('agent cannot open Handler Allocation -> 403', (await AG2.get('/handlers')).status === 403);
     // ---------- website common login: POST /auth/sign-in finds the portal ----------
-    // Website login: User ID or full name only (not email / mobile).
+    // Website login: User ID or email only (not mobile number / name).
     r = await pub.post('/auth/sign-in', { identifier: SA_EMAIL, password: SA_PW });
-    check('sign-in: email is not accepted on the website -> 401 with a hint', r.status === 401 && /User ID or full name/.test(r.data.detail), r.data);
-    r = await pub.post('/auth/sign-in', { identifier: 'Super Admin', password: SA_PW });
-    check('sign-in: super admin by full name', r.status === 200 && r.data.portal === 'superadmin', r.data);
+    check('sign-in: super admin by email', r.status === 200 && r.data.portal === 'superadmin', r.data);
+    check('sign-in: name is not a sign-in name -> 401', (await pub.post('/auth/sign-in', { identifier: 'Super Admin', password: SA_PW })).status === 401);
     const saId = r.data.admin?.id;
     r = await pub.post('/auth/sign-in', { identifier: saId, password: SA_PW });
     check('sign-in: super admin -> portal superadmin + its token', r.status === 200 && r.data.portal === 'superadmin' && !!r.data.admin?.id && (await call(SA_BASE, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
-    r = await pub.post('/auth/sign-in', { identifier: 'admin', password: ADMIN_PW });
-    check('sign-in: admin portal admin by full name (case-insensitive) -> portal admin + its token', r.status === 200 && r.data.portal === 'admin' && !!r.data.admin?.id && (await call(ADMIN, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'admin@test.in', password: ADMIN_PW });
+    check('sign-in: admin portal admin by email -> portal admin + its token', r.status === 200 && r.data.portal === 'admin' && !!r.data.admin?.id && (await call(ADMIN, 'GET', '/auth/me', undefined, { token: r.data.token })).status === 200, r.data);
     r = await pub.post('/auth/sign-in', { identifier: '9876543210', password: ADMIN_PW });
-    check('sign-in: mobile number is not accepted on the website -> 401', r.status === 401, r.data);
-    r = await pub.post('/auth/sign-in', { identifier: 'Karan Mehta', password: 'Karan@2026' });
-    check('sign-in: portal user by full name', r.status === 200 && r.data.portal === 'claim' && r.data.user.userId === 'karan.cc', r.data);
+    check('sign-in: mobile number is not accepted on the website -> 401 with a hint', r.status === 401 && /User ID or email/.test(r.data.detail), r.data);
+    r = await pub.post('/auth/sign-in', { identifier: 'karan@test.in', password: 'Karan@2026' });
+    check('sign-in: portal user by email', r.status === 200 && r.data.portal === 'claim' && r.data.user.userId === 'karan.cc', r.data);
+    check('sign-in: portal user name is not a sign-in name -> 401', (await pub.post('/auth/sign-in', { identifier: 'Karan Mehta', password: 'Karan@2026' })).status === 401);
     r = await pub.post('/auth/sign-in', { identifier: 'karan.cc', password: 'Karan@2026' });
     check('sign-in: portal user -> portal claim, call center token works here', r.status === 200 && r.data.portal === 'claim' && r.data.user.roleKey === 'call-center' && (await api(CC, r.data.token).get('/auth/me')).status === 200, r.data);
     r = await pub.post('/auth/sign-in', { identifier: 'nobody.at.all', password: 'Whatever@1' });

@@ -20,28 +20,22 @@ async function post(base, path, body, req, headers = {}) {
     }
 }
 
-/** Email addresses and mobile numbers are not sign-in names on the website (User ID or full name only). */
-export const isEmailOrMobile = (value) => value.includes('@') || /^\+?[\d\s-]{10,15}$/.test(value);
+/** Mobile numbers are not sign-in names on the website (User ID or email only). */
+export const isMobileNumber = (value) => !value.includes('@') && /^\+?[\d\s-]{10,15}$/.test(value);
 
 /**
- * The account a website sign-in name belongs to: { kind: 'superadmin' | 'admin' | 'user', loginId } or null.
- * A User ID wins (Super Admin console first); otherwise the full name, when exactly one
- * account has it. Several accounts with that name -> 409 (sign in with the User ID).
+ * The account a website sign-in name (User ID or email) belongs to:
+ * { kind: 'superadmin' | 'admin' | 'user', loginId } or null. Super Admin console first.
  */
 export async function resolveAccount(identifier, req) {
-    let saNames = [];
     if (settings.superadminServiceUrl && settings.superadminServiceKey) {
         const res = await post(settings.superadminServiceUrl, '/internal/identify', { identifier }, req, { 'X-Service-Key': settings.superadminServiceKey });
         if (!res.ok) throw new HttpError(503, 'Super Admin sign-in is not available right now. Try again in a moment.');
         const sa = await res.json();
         if (sa.exists) return { kind: 'superadmin', loginId: sa.loginId ?? identifier };
-        saNames = (sa.names ?? []).map((id) => ({ kind: 'superadmin', loginId: id }));
     }
     const ad = await identifyAccount(identifier, req);
-    if (ad.kind) return { kind: ad.kind, loginId: ad.loginId ?? identifier };
-    const byName = [...saNames, ...(ad.names ?? [])];
-    if (byName.length > 1) throw new HttpError(409, 'More than one account has this name. Sign in with your User ID.');
-    return byName[0] ?? null;
+    return ad.kind ? { kind: ad.kind, loginId: ad.loginId ?? identifier } : null;
 }
 
 /** 'superadmin' | 'admin' | 'user' | null for a sign-in name. */
