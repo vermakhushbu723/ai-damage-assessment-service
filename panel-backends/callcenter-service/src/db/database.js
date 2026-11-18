@@ -195,6 +195,14 @@ db.exec(`
           AND NOT EXISTS (SELECT 1 FROM events e WHERE e.claim_id = d.claim_id AND e.kind = 'stage' AND e.action = 'handler-ila')`).all();
     const addStage = db.prepare("INSERT INTO events (claim_id, kind, action, detail, data, actor_id, actor_name, at) VALUES (?, 'stage', 'handler-ila', 'Handler ILA completed', '{}', NULL, ?, ?)");
     for (const r of missingHandlerIla) addStage.run(r.claim_id, r.updated_by ?? 'System', r.updated_at);
+    // Claim Details came back as a step (after Handler Allocation): claims already past it
+    // (AI ILA or a later step done) count it as done; claims waiting on AI ILA go back to it.
+    db.exec(`INSERT INTO events (claim_id, kind, action, detail, data, actor_id, actor_name, at)
+        SELECT c.id, 'stage', 'claim-details', 'Claim Details completed', '{}', NULL, 'System',
+               (SELECT MIN(at) FROM events e WHERE e.claim_id = c.id AND e.kind = 'stage' AND e.action IN ('ai-ila', 'handler-ila', 'fla', 'survey-paybill'))
+        FROM claims c
+        WHERE EXISTS (SELECT 1 FROM events e WHERE e.claim_id = c.id AND e.kind = 'stage' AND e.action IN ('ai-ila', 'handler-ila', 'fla', 'survey-paybill'))
+          AND NOT EXISTS (SELECT 1 FROM events e WHERE e.claim_id = c.id AND e.kind = 'stage' AND e.action = 'claim-details')`);
     const doneOf = db.prepare("SELECT DISTINCT action FROM events WHERE claim_id = ? AND kind = 'stage'");
     const setStage = db.prepare('UPDATE claims SET stage = ? WHERE id = ?');
     const close = db.prepare("UPDATE claims SET status = 'Closed' WHERE id = ?");

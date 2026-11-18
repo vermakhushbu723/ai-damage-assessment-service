@@ -3,14 +3,15 @@
 // anything the screens could not have sent.
 
 /**
- * Claim journey, in order (Service Provider): Intimation -> Handler Allocation ->
- * AI ILA -> Handler ILA -> FLA -> Survey Fee Bill. A claim's `stage` is the next
- * step still to do. Claim Details, Surveyor Assignment and Payment Recommendation
- * are still screens (documents, a surveyor, a payment approval) but not steps.
+ * Claim journey, in order (Service Provider, Super Admin > Workflow): Intimation ->
+ * Handler Allocation -> Claim Details -> AI ILA -> Handler ILA -> FLA -> Survey Fee Bill.
+ * A claim's `stage` is the next step still to do. Surveyor Assignment and Payment
+ * Recommendation are still screens (a surveyor, a payment approval) but not steps.
  */
 export const STAGES = [
     { key: 'intimation', label: 'Intimation' },
     { key: 'handler-allocation', label: 'Handler Allocation' },
+    { key: 'claim-details', label: 'Claim Details' },
     { key: 'ai-ila', label: 'AI ILA' },
     { key: 'handler-ila', label: 'Handler ILA' },
     { key: 'fla', label: 'FLA' },
@@ -24,6 +25,7 @@ export const stageLabel = (key) => STAGES.find((s) => s.key === key)?.label ?? (
 export const ADMIN_STAGE = {
     intimation: 'Intimation',
     'handler-allocation': 'Intimation',
+    'claim-details': 'Survey',
     'ai-ila': 'AI ILA',
     'handler-ila': 'ILA',
     fla: 'ILA',

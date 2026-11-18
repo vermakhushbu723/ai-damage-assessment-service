@@ -35,6 +35,7 @@ function spDetails(row) {
     const stage = {
         intimation: 'Intimation',
         'handler-allocation': 'Handler Allocation',
+        'claim-details': 'AI ILA', // Admin SP dashboard has no Claim Details step: AI ILA is next
         'ai-ila': 'AI ILA',
         'handler-ila': 'Handler ILA',
         fla: 'FLA',
