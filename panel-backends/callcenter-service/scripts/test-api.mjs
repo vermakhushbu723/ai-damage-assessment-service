@@ -391,6 +391,11 @@ try {
     raw = await H.raw('GET', `/claims/${claimId}/ai-ila/export.csv`);
     check('Export CSV', raw.status === 200 && raw.buf.toString().split('\n').length === 6);
     r = await H.post(`/claims/${claimId}/ai-ila/decision`, { decision: 'Approved' });
+    {
+        const ai = (await H.get(`/claims/${claimId}/ai-ila`)).data;
+        const cost = Object.fromEntries((ai?.summary?.costs ?? []).map((x) => [x.key, x.value]));
+        check('AI ILA initial loss card: labour and paint are amounts (no NaN)', Number.isFinite(cost.labour) && Number.isFinite(cost.paint) && cost.paint > 0, ai?.summary?.costs);
+    }
     check('Approve AI -> stage Handler ILA, corrections sent to retraining', r.status === 200 && r.data.claim.stage === 'handler-ila' && corrections.length >= 1 && r.data.review.decision === 'Approved', { stage: r.data?.claim?.stage, corrections: corrections.length });
     check('approved assessment is locked', (await H.patch(`/claims/${claimId}/ai-ila/items/${rows[0].id}`, { cost: 1 })).status === 409);
     check('Admin portal stage AI ILA -> ILA', (await A.get(`/claims/${claimNo}`)).data.stage === 'ILA');

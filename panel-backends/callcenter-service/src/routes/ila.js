@@ -168,8 +168,8 @@ async function ilaState(row) {
             costs: [
                 { key: 'repair', label: 'Repair Cost', value: items.filter((x) => x.action === 'Repair' && x.status !== 'Rejected').reduce((s, x) => s + x.cost, 0) },
                 { key: 'replacement', label: 'Replacement Cost', value: items.filter((x) => x.action === 'Replace' && x.status !== 'Rejected').reduce((s, x) => s + x.cost, 0) },
-                { key: 'labour', label: 'Labour Cost', value: liability.labour.removeRefit + liability.labour.repair },
-                { key: 'paint', label: 'Paint Charges', value: liability.labour.paint },
+                { key: 'labour', label: 'Labour Cost', value: liability.labour.ofd },
+                { key: 'paint', label: 'Paint Charges', value: liability.labour.paintLabour + liability.labour.paintMaterial },
             ],
             recommendation: withinPolicy === false
                 ? { title: 'AI Recommendation: Review', detail: 'Incident date is outside the policy period', ok: false }
