@@ -2,6 +2,7 @@ import { db, parseJson } from '../db/database.js';
 import { getDoc } from '../models/claimModel.js';
 import {
     DEPRECIATION, PARTS_GST, LABOUR_GST, LABOUR_RATES, COMPULSORY_EXCESS, DEFAULT_HSN, TRACKED_FIELDS,
+    METAL_DEPRECIATION, METAL_DEPRECIATION_DEFAULT, PAINT_MATERIAL_SHARE, PAINT_MATERIAL_DEPRECIATION, IMT23_DEDUCTION, LEGACY_MATERIAL,
 } from '../constants.js';
 
 // The money side of a claim, computed in one place so AI ILA, Handler ILA
@@ -49,7 +50,8 @@ export const aiEstimate = (items) => items.filter((i) => i.status !== 'Rejected'
 /** Best guess of a part's material from its name (reviewer can change it). */
 export function guessMaterial(part) {
     const p = String(part).toLowerCase();
-    if (/(glass|windshield|wind shield|windscreen)/.test(p)) return 'Glass Fiber';
+    if (/(fibre|fiber)/.test(p)) return 'Fibre Glass';
+    if (/(glass|windshield|wind shield|windscreen)/.test(p)) return 'Glass';
     if (/(tyre|tire|rubber|beading|seal)/.test(p)) return 'Rubber';
     if (/(bumper|grill|grille|lamp|light|orvm|mirror|cladding|trim|garnish)/.test(p)) return 'Plastic';
     return 'Metal';
@@ -87,109 +89,152 @@ export function liabilityDoc(claimId, kind = 'liability') {
 }
 
 const r0 = (n) => Math.round(n);
+const r2 = (n) => Math.round(n * 100) / 100;
 
-/** The four computation tables + totals of the Handler ILA screen. */
-export function computeLiability(doc) {
+/** Vehicle age in months at the date of loss (manufacturing year / registration date of the intimation). */
+export function vehicleAgeMonths(row) {
+    const i = parseJson(row?.intimation, {});
+    const from = Date.parse(i.registrationDate ?? '') || Date.parse(i.manufacturingYear ?? '');
+    if (!from) return null;
+    const to = Date.parse(i.dateOfIncident ?? '') || Date.now();
+    return Math.max(0, Math.floor((to - from) / (30.4375 * 24 * 3600 * 1000)));
+}
+
+export const metalDepreciation = (ageMonths) => (ageMonths == null ? METAL_DEPRECIATION_DEFAULT : METAL_DEPRECIATION.find(([upTo]) => ageMonths <= upTo)[1]);
+const materialOf = (m) => LEGACY_MATERIAL[m] ?? m;
+
+/**
+ * The Handler ILA / FLA computation (Figma: Parts Assessment + 1. Component Cost
+ * Summary, 2. Labour Cost Summary, 3. Remarks, 4. Final Settlement Summary).
+ * Every row: Gross - Depn - IMT 23 = Net. Depreciation only on replaced parts.
+ */
+export function computeLiability(doc, { ageMonths = null } = {}) {
+    const metalRate = metalDepreciation(ageMonths);
     const parts = (doc.parts ?? []).map((p, i) => {
-        const dep = p.action === 'Replace' ? (DEPRECIATION[p.material] ?? 0.5) : 0;
-        return { ...p, srNo: String(i + 1).padStart(2, '0'), depreciationPct: Math.round(dep * 100) };
+        const material = materialOf(p.material);
+        const rate = p.action === 'Replace' ? (material === 'Metal' ? metalRate : DEPRECIATION[material] ?? 0.5) : 0;
+        return { ...p, material, imt23: !!p.imt23, srNo: String(i + 1).padStart(2, '0'), depreciationPct: Math.round(rate * 100), _rate: rate };
     });
     const allowed = parts.filter((p) => p.allowed === 'Allowed');
-
-    const group = (p) => (p.material === 'Metal' ? 0 : p.material === 'Glass Fiber' ? 2 : 1);
-    const gross = [0, 0, 0];
-    const depn = [0, 0, 0];
-    for (const p of allowed) {
-        gross[group(p)] += p.partPrice || 0;
-        depn[group(p)] += (p.partPrice || 0) * (p.depreciationPct / 100);
-    }
-    const net = gross.map((g, i) => g - depn[i]);
-    const gst = net.map((n) => n * PARTS_GST);
-    const totalParts = net.map((n, i) => n + gst[i]);
     const sum = (a) => a.reduce((s, v) => s + v, 0);
 
-    const replaceCount = allowed.filter((p) => p.action === 'Replace').length;
-    const repairCount = allowed.filter((p) => p.action === 'Repair').length;
-    const labour = {
-        removeRefit: replaceCount * LABOUR_RATES.removeRefit,
-        repair: repairCount * LABOUR_RATES.repair,
-        paint: allowed.filter((p) => p.material !== 'Glass Fiber' && p.material !== 'Rubber').length * LABOUR_RATES.paint,
+    // ---- 1. Component Cost Summary ----
+    const GROUPS = [
+        { key: 'metal', label: `Metal Parts ${Math.round(metalRate * 100)}% Depreciation`, has: (m) => m === 'Metal', always: true },
+        { key: 'plastic', label: 'Plastic / Rubber Parts 50% Depreciation', has: (m) => m === 'Plastic' || m === 'Rubber', always: true },
+        { key: 'fibre', label: 'Fibre Glass Parts 30% Depreciation', has: (m) => m === 'Fibre Glass' },
+        { key: 'glass', label: 'Parts - Glass Nil Depreciation', has: (m) => m === 'Glass', always: true },
+    ];
+    const line = (list) => {
+        const gross = sum(list.map((p) => p.partPrice || 0));
+        const depn = sum(list.map((p) => (p.partPrice || 0) * p._rate));
+        const imt = sum(list.filter((p) => p.imt23).map((p) => ((p.partPrice || 0) * (1 - p._rate)) * IMT23_DEDUCTION));
+        return { gross, depn, imt, net: gross - depn - imt };
     };
-    const labourGross = labour.removeRefit + labour.repair + labour.paint;
-    const labourGst = labourGross * LABOUR_GST;
-    const labourTotal = labourGross + labourGst;
+    const groupLines = GROUPS.map((g) => ({ ...g, ...line(allowed.filter((p) => g.has(p.material))) })).filter((g) => g.always || g.gross);
+    const partsBase = line(allowed);
+    const partsTax = { gross: partsBase.gross * PARTS_GST, depn: partsBase.depn * PARTS_GST, imt: partsBase.imt * PARTS_GST, net: partsBase.net * PARTS_GST };
+    const partsTotal = { gross: partsBase.gross + partsTax.gross, depn: partsBase.depn + partsTax.depn, imt: partsBase.imt + partsTax.imt, net: partsBase.net + partsTax.net };
 
+    // ---- 2. Labour Cost Summary ----
+    const replaced = allowed.filter((p) => p.action === 'Replace');
+    const repaired = allowed.filter((p) => p.action === 'Repair');
+    const painted = allowed.filter((p) => p.material !== 'Glass' && p.material !== 'Rubber');
+    const labourOfd = { gross: replaced.length * LABOUR_RATES.removeRefit + repaired.length * LABOUR_RATES.repair, depn: 0, imt: 0 };
+    labourOfd.net = labourOfd.gross;
+    const paintShare = (list, share) => sum(list.map(() => LABOUR_RATES.paint * share));
+    const paintLabour = { gross: paintShare(painted, 1 - PAINT_MATERIAL_SHARE), depn: 0 };
+    paintLabour.imt = paintShare(painted.filter((p) => p.imt23), 1 - PAINT_MATERIAL_SHARE) * IMT23_DEDUCTION;
+    paintLabour.net = paintLabour.gross - paintLabour.imt;
+    const paintMaterial = { gross: paintShare(painted, PAINT_MATERIAL_SHARE) };
+    paintMaterial.depn = paintMaterial.gross * PAINT_MATERIAL_DEPRECIATION;
+    paintMaterial.imt = paintShare(painted.filter((p) => p.imt23), PAINT_MATERIAL_SHARE) * (1 - PAINT_MATERIAL_DEPRECIATION) * IMT23_DEDUCTION;
+    paintMaterial.net = paintMaterial.gross - paintMaterial.depn - paintMaterial.imt;
+    const labourBase = ['gross', 'depn', 'imt', 'net'].reduce((o, k) => ({ ...o, [k]: labourOfd[k] + paintLabour[k] + paintMaterial[k] }), {});
+    const labourTax = ['gross', 'depn', 'imt', 'net'].reduce((o, k) => ({ ...o, [k]: labourBase[k] * LABOUR_GST }), {});
+    const labourTotal = ['gross', 'depn', 'imt', 'net'].reduce((o, k) => ({ ...o, [k]: labourBase[k] + labourTax[k] }), {});
+
+    // ---- 4. Final Settlement Summary ----
     const c = doc.charges ?? {};
+    const amt = (k) => Math.max(0, Number(c[k]) || 0);
     const charges = {
-        towing: Number(c.towing) || 0,
+        towing: amt('towing'),
+        onSiteRepair: amt('onSiteRepair'),
+        policyBenefits: amt('policyBenefits'),
+        additionalBenefits: amt('additionalBenefits'),
+        depreciationRefund: amt('depreciationRefund'),
         compulsoryExcess: allowed.length ? -(c.compulsoryExcess ?? COMPULSORY_EXCESS) : 0,
-        voluntaryExcess: -(Number(c.voluntaryExcess) || 0),
-        salvage: -(Number(c.salvage) || 0),
-        other: -(Number(c.other) || 0),
+        voluntaryExcess: -amt('voluntaryExcess'),
+        salvage: -amt('salvage'),
+        other: -amt('other'),
+        extraDeduction: -amt('extraDeduction'),
     };
-    const deductions = charges.compulsoryExcess + charges.voluntaryExcess + charges.salvage + charges.other;
+    const partialDamage = partsTotal.net + labourTotal.net;
+    const additions = charges.towing + charges.onSiteRepair + charges.policyBenefits + charges.additionalBenefits + charges.depreciationRefund;
+    const totalAssessed = partialDamage + additions;
+    const deductions = charges.compulsoryExcess + charges.voluntaryExcess + charges.salvage + charges.other + charges.extraDeduction;
+    const finalPayable = Math.max(0, totalAssessed + deductions);
 
-    const partsAllowed = sum(totalParts);
-    const grossLiability = partsAllowed + labourTotal + charges.towing;
-    const netLiability = grossLiability + deductions;
-
+    const row4 = (key, label, v, bold = false) => ({ key, label, values: [r2(v.gross), r2(v.depn), r2(v.imt), r2(v.net)], ...(bold ? { bold: true } : {}) });
+    const COLS = ['Gross Amount', 'Depn', 'IMT 23', 'Net Amount'];
     return {
-        parts,
+        parts: parts.map(({ _rate, ...p }) => p),
+        ageMonths,
+        metalDepreciationPct: Math.round(metalRate * 100),
+        remarks: doc.summaryRemarks ?? '',
         totals: {
-            partsPriceAllowed: r0(sum(allowed.map((p) => p.partPrice || 0))),
-            partsAllowed: r0(partsAllowed),
-            labourAllowed: r0(labourTotal),
-            additional: r0(charges.towing),
-            grossLiability: r0(grossLiability),
+            partsPriceAllowed: r0(partsBase.gross),
+            partsAllowed: r0(partsTotal.net),
+            labourAllowed: r0(labourTotal.net),
+            additional: r0(additions),
+            partialDamage: r0(partialDamage),
+            grossLiability: r0(totalAssessed),
             deductions: r0(deductions),
-            netLiability: r0(Math.max(0, netLiability)),
+            netLiability: r0(finalPayable),
         },
         tables: {
             parts: {
-                columns: ['Particulars', 'Metal Parts', 'Plastic/Rubber Parts', 'Glass Fiber Parts', 'Total'],
+                title: '1. Component Cost Summary',
+                columns: ['Parts Computation', ...COLS],
                 rows: [
-                    { key: 'gross', label: 'Gross Amount', values: [...gross, sum(gross)].map(r0) },
-                    { key: 'depreciation', label: 'Less Depreciation', values: [...depn, sum(depn)].map((v) => -r0(v)) },
-                    { key: 'net', label: 'Net Amount', values: [...net, sum(net)].map(r0) },
-                    { key: 'gst', label: `GST @ ${Math.round(PARTS_GST * 100)}%`, values: [...gst, sum(gst)].map(r0) },
-                    { key: 'total', label: 'Total Allowed Parts', values: [...totalParts, partsAllowed].map(r0), bold: true },
+                    ...groupLines.map((g) => row4(g.key, g.label, g)),
+                    row4('tax', `Tax on Parts Allowed (GST ${Math.round(PARTS_GST * 100)}%)`, partsTax),
+                    row4('total', 'Total on Parts Allowed', partsTotal, true),
                 ],
             },
             labour: {
-                columns: ['Particulars', 'Amount'],
+                title: '2. Labour Cost Summary',
+                columns: ['Labour Computation', ...COLS],
                 rows: [
-                    { key: 'remove-refit', label: 'Remove & Refit Labour', values: [labour.removeRefit] },
-                    { key: 'repair', label: 'Repair Labour', values: [labour.repair] },
-                    { key: 'paint', label: 'Paint Labour', values: [labour.paint] },
-                    { key: 'gross', label: 'Gross Labour', values: [labourGross] },
-                    { key: 'gst', label: `GST @ ${Math.round(LABOUR_GST * 100)}%`, values: [r0(labourGst)] },
-                    { key: 'total', label: 'Total Labour Allowed', values: [r0(labourTotal)], bold: true },
-                ],
-            },
-            charges: {
-                columns: ['Particulars', 'Amount'],
-                rows: [
-                    { key: 'towing', label: 'Additional Charges (Towing Etc)', values: [charges.towing] },
-                    { key: 'compulsory-excess', label: 'Compulsory Excess', values: [charges.compulsoryExcess] },
-                    { key: 'voluntary-excess', label: 'Voluntary Excess', values: [charges.voluntaryExcess] },
-                    { key: 'salvage', label: 'Salvage Value', values: [charges.salvage] },
-                    { key: 'other', label: 'Other Deduction', values: [charges.other] },
-                    { key: 'total', label: 'Total Deductions', values: [r0(deductions)], bold: true },
+                    row4('ofd', 'Labour O/F/D', labourOfd),
+                    row4('paint-labour', 'Paint Labour', paintLabour),
+                    row4('paint-material', 'Paint Material', paintMaterial),
+                    row4('tax', `Tax on Labour Allowed (GST ${Math.round(LABOUR_GST * 100)}%)`, labourTax),
+                    row4('total', 'Total on Labour Allowed', labourTotal, true),
                 ],
             },
             final: {
-                columns: ['Particulars', 'Amount'],
+                title: '4. Final Settlement Summary',
+                columns: ['Settlement Computation', 'Net Amount'],
                 rows: [
-                    { key: 'parts', label: 'Total Allowed Parts', values: [r0(partsAllowed)] },
-                    { key: 'labour', label: 'Total Labour Allowed', values: [r0(labourTotal)] },
-                    { key: 'additional', label: 'Additional Charges', values: [r0(charges.towing)] },
-                    { key: 'gross', label: 'Gross Liability', values: [r0(grossLiability)] },
-                    { key: 'deductions', label: 'Less: Total Deductions', values: [r0(deductions)] },
-                    { key: 'net', label: 'Net Liability', values: [r0(Math.max(0, netLiability))], bold: true },
+                    { key: 'category', label: 'Settlement Category', text: 'Partial Loss' },
+                    { key: 'partial', label: 'Partial Damage (Parts + Labour)', values: [r2(partialDamage)] },
+                    { key: 'depreciationRefund', label: 'Depreciation Refund', values: [charges.depreciationRefund], editable: true },
+                    { key: 'additionalBenefits', label: 'Additional Benefits', values: [charges.additionalBenefits], editable: true },
+                    { key: 'policyBenefits', label: 'Policy Benefits', values: [charges.policyBenefits], editable: true },
+                    { key: 'towing', label: 'Towing Charges', values: [charges.towing], editable: true },
+                    { key: 'onSiteRepair', label: 'On-Site Repair Cost', values: [charges.onSiteRepair], editable: true },
+                    { key: 'assessed', label: 'Total Assessed Claim', values: [r2(totalAssessed)], bold: true },
+                    { key: 'compulsoryExcess', label: 'Mandatory Deductible', values: [charges.compulsoryExcess], editable: true, deduction: true },
+                    { key: 'voluntaryExcess', label: 'Voluntary Deductible', values: [charges.voluntaryExcess], editable: true, deduction: true },
+                    { key: 'salvage', label: 'Recoverable Salvage Amount', values: [charges.salvage], editable: true, deduction: true },
+                    { key: 'other', label: 'Miscellaneous Deductions', values: [charges.other], editable: true, deduction: true },
+                    { key: 'extraDeduction', label: 'Extra Deduction', values: [charges.extraDeduction], editable: true, deduction: true },
+                    { key: 'net', label: 'Final Payable Amount', values: [r0(finalPayable)], bold: true },
                 ],
             },
         },
-        labour,
+        labour: { ofd: labourOfd.gross, paintLabour: paintLabour.gross, paintMaterial: paintMaterial.gross },
         charges,
     };
 }

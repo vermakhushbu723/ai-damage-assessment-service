@@ -400,7 +400,30 @@ try {
     check('liability seeded from approved AI rows', r.status === 200 && r.data.seeded && r.data.parts.length === 5 && r.data.totals.netLiability > 0, r.data?.totals);
     const glass = r.data.parts.length;
     r = await H.post(`/claims/${claimId}/liability/parts`, { part: 'Front Wind Shield', material: 'Glass Fiber', action: 'Replace', allowed: 'Allowed', partPrice: 12000 });
-    check('Add Part', r.status === 201 && r.data.parts.length === glass + 1 && r.data.parts.at(-1).depreciationPct === 30, r.data?.parts?.at(-1));
+    check('Add Part: windshield (legacy "Glass Fiber") = Glass, nil depreciation', r.status === 201 && r.data.parts.length === glass + 1 && r.data.parts.at(-1).material === 'Glass' && r.data.parts.at(-1).depreciationPct === 0, r.data?.parts?.at(-1));
+    // Vehicle made Jan 2021, loss Oct 2026 (~69 months) -> metal 40% (IRDAI 5-10 years)
+    check('metal depreciation by vehicle age (5-10 years -> 40%)', r.data.metalDepreciationPct === 40 && r.data.tables.parts.rows[0].label.startsWith('Metal Parts 40%'), r.data.tables?.parts?.rows?.[0]);
+    {
+        const rows = (t) => Object.fromEntries(r.data.tables[t].rows.map((x) => [x.key, x]));
+        const ok = (row) => Math.abs(row.values[0] - row.values[1] - row.values[2] - row.values[3]) < 0.02;
+        check('Figma layout: every summary row Gross - Depn - IMT 23 = Net', ['parts', 'labour'].every((t) => r.data.tables[t].columns.length === 5 && r.data.tables[t].rows.every(ok)));
+        check('paint material depreciated 50%, paint labour not', rows('labour')['paint-material'].values[1] === rows('labour')['paint-material'].values[0] / 2 && rows('labour')['paint-labour'].values[1] === 0);
+        check('final payable = last row of the Final Settlement Summary', r.data.tables.final.rows.at(-1).key === 'net' && r.data.tables.final.rows.at(-1).values[0] === r.data.totals.netLiability);
+    }
+    {
+        const before = r.data.totals.netLiability;
+        const part = r.data.parts.find((x) => x.material === 'Plastic' && x.allowed === 'Allowed');
+        let x = await H.patch(`/claims/${claimId}/liability/parts/${part.id}`, { imt23: true });
+        const imt = x.data.tables.parts.rows.find((row) => row.key === 'plastic').values[2];
+        check('IMT 23 on a part: 50% of its net after depreciation deducted', x.status === 200 && x.data.parts.find((y) => y.id === part.id).imt23 === true && imt > 0 && x.data.totals.netLiability < before, { imt, before, after: x.data.totals.netLiability });
+        x = await H.patch(`/claims/${claimId}/liability/parts/${part.id}`, { imt23: false });
+        check('IMT 23 off again -> same amount as before', x.data.totals.netLiability === before);
+        x = await H.put(`/claims/${claimId}/liability/charges`, { towing: 1500, voluntaryExcess: 500, remarks: 'Cashless claim payment to workshop' });
+        check('Final Settlement: towing added, voluntary deductible deducted, remarks saved', x.status === 200 && x.data.totals.netLiability === before + 1000 && x.data.remarks === 'Cashless claim payment to workshop', x.data?.totals);
+        x = await H.put(`/claims/${claimId}/liability/charges`, { towing: 0, voluntaryExcess: 0 });
+        check('charges back to 0', x.data.totals.netLiability === before);
+        r = x;
+    }
     r = await H.patch(`/claims/${claimId}/liability/parts/${r.data.parts.at(-1).id}`, { allowed: 'Disallowed', remarks: 'Pre-existing' });
     check('disallow a part (not counted)', r.data.parts.at(-1).allowed === 'Disallowed' && r.data.tables.final.rows.at(-1).values[0] === r.data.totals.netLiability);
     check('compulsory excess deducted', r.data.charges.compulsoryExcess === -1000);

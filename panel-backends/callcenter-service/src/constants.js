@@ -129,10 +129,23 @@ export const DAMAGE_STATUSES = ['Pending', 'Approval', 'In Review', 'Rejected'];
 export const TRACKED_FIELDS = ['damageType', 'severity', 'action', 'cost', 'status'];
 
 // ---- Handler ILA (liability) ----
-export const MATERIALS = ['Metal', 'Plastic', 'Glass Fiber', 'Rubber'];
+export const MATERIALS = ['Metal', 'Plastic', 'Rubber', 'Fibre Glass', 'Glass'];
+/** Older documents used 'Glass Fiber' for glass parts (windshield): read as Glass. */
+export const LEGACY_MATERIAL = { 'Glass Fiber': 'Glass' };
 export const ALLOWED = ['Allowed', 'Disallowed'];
-/** Depreciation on parts by material (IRDAI motor schedule, simplified). */
-export const DEPRECIATION = { Metal: 0.5, Plastic: 0.5, Rubber: 0.5, 'Glass Fiber': 0.3 };
+/**
+ * Depreciation on replaced parts (IRDAI motor tariff): rubber / nylon / plastic 50%,
+ * fibre glass 30%, glass nil; metal by the vehicle's age (METAL_DEPRECIATION).
+ */
+export const DEPRECIATION = { Plastic: 0.5, Rubber: 0.5, 'Fibre Glass': 0.3, Glass: 0 };
+/** Metal parts by vehicle age in months: [up to, rate]. Age unknown -> METAL_DEPRECIATION_DEFAULT. */
+export const METAL_DEPRECIATION = [[6, 0], [12, 0.05], [24, 0.1], [36, 0.15], [48, 0.25], [60, 0.35], [120, 0.4], [Infinity, 0.5]];
+export const METAL_DEPRECIATION_DEFAULT = 0.1;
+/** Paint: labour vs material share of the paint rate; material is depreciated 50%. */
+export const PAINT_MATERIAL_SHARE = 0.25;
+export const PAINT_MATERIAL_DEPRECIATION = 0.5;
+/** IMT 23 not opted: 50% deduction on the parts marked IMT 23 (and their paint). */
+export const IMT23_DEDUCTION = 0.5;
 export const PARTS_GST = 0.28;
 export const LABOUR_GST = 0.18;
 /** Labour per part when the reviewer gives none: remove & refit (replace), repair, paint. */

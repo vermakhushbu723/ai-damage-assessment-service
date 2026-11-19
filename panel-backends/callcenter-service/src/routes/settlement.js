@@ -7,7 +7,7 @@ import {
     PAYMENT_FOR, APPROVER_ROLES, SURVEYOR_ROLES, PAYBILL_LINES, PAYBILL_GST,
 } from '../constants.js';
 import { findClaimRow, toClaim, getDoc, putDoc, audit, completeStage, setClaimFields } from '../models/claimModel.js';
-import { damageItems, aiEstimate, liabilityDoc, computeLiability } from '../services/assessment.js';
+import { damageItems, aiEstimate, liabilityDoc, computeLiability as computeRaw, vehicleAgeMonths } from '../services/assessment.js';
 import { directory } from '../services/adminClient.js';
 import { syncClaim } from '../services/sync.js';
 import { currentDocuments } from './documents.js';
@@ -38,12 +38,15 @@ const KINDS = {
 };
 const KIND_PATH = '/claims/:id/:kind(liability|fla)';
 
+/** The claim's computation (metal depreciation by the vehicle's age). */
+const computeLiability = (doc, row) => computeRaw(doc, { ageMonths: vehicleAgeMonths(row) });
+
 /** Role check on the module of the requested kind. */
 const canKind = (action = 'view') => (req, res, next) => can(KINDS[req.params.kind].module, action)(req, res, next);
 
 function liabilityState(row, kind) {
     const doc = liabilityDoc(row.id, kind);
-    const computed = computeLiability(doc);
+    const computed = computeLiability(doc, row);
     return {
         kind,
         status: doc.status ?? 'Draft',
@@ -73,6 +76,7 @@ function checkPart(p, partial = false) {
         out.part = name;
     }
     if (!partial || 'material' in p) {
+        if (p.material === 'Glass Fiber') p.material = 'Glass';
         if (!MATERIALS.includes(p.material)) throw badRequest(`Material must be one of: ${MATERIALS.join(', ')}.`);
         out.material = p.material;
     }
@@ -94,6 +98,7 @@ function checkPart(p, partial = false) {
         if (!/^\d{4,8}$/.test(String(p.hsnCode))) throw badRequest('HSN/SAC code must be 4-8 digits.');
         out.hsnCode = String(p.hsnCode);
     }
+    if (!partial || 'imt23' in p) out.imt23 = p.imt23 === true || p.imt23 === 'Yes';
     return out;
 }
 
@@ -125,19 +130,24 @@ router.patch(`${KIND_PATH}/parts/:partId`, canKind('edit'), (req, res) => {
     res.json(liabilityState(row, kind));
 });
 
-/** PUT /api/v1/claims/:id/(liability|fla)/charges { towing?, voluntaryExcess?, salvage?, other?, compulsoryExcess? } */
+/**
+ * PUT /api/v1/claims/:id/(liability|fla)/charges -- Final Settlement Summary amounts and 3. Remarks:
+ * { towing?, onSiteRepair?, policyBenefits?, additionalBenefits?, depreciationRefund?, compulsoryExcess?,
+ *   voluntaryExcess?, salvage?, other?, extraDeduction?, remarks? }
+ */
 router.put(`${KIND_PATH}/charges`, canKind('edit'), (req, res) => {
     const { kind } = req.params;
     const row = openClaim(req);
     const doc = editableLiability(row, kind);
     const charges = { ...(doc.charges ?? {}) };
-    for (const k of ['towing', 'voluntaryExcess', 'salvage', 'other', 'compulsoryExcess']) {
+    for (const k of ['towing', 'onSiteRepair', 'policyBenefits', 'additionalBenefits', 'depreciationRefund', 'voluntaryExcess', 'salvage', 'other', 'extraDeduction', 'compulsoryExcess']) {
         if (!(k in (req.body ?? {}))) continue;
         const n = Number(req.body[k]);
         if (!Number.isFinite(n) || n < 0) throw badRequest(`${k} must be a positive amount.`);
         charges[k] = Math.round(n);
     }
-    putDoc(row.id, kind, { ...doc, charges }, actorOf(req));
+    const summaryRemarks = typeof req.body?.remarks === 'string' ? req.body.remarks.slice(0, 2000) : doc.summaryRemarks;
+    putDoc(row.id, kind, { ...doc, charges, summaryRemarks }, actorOf(req));
     res.json(liabilityState(row, kind));
 });
 
@@ -146,18 +156,19 @@ function liabilityPdf(res, row, kind) {
     const c = toClaim(row);
     const table = (t) => [
         { text: t.columns.join('  |  '), bold: true, size: 9, gap: 4 },
-        ...t.rows.map((r) => ({ cols: [r.label, r.values.map((v) => inr(v)).join('   ')], size: 9, bold: !!r.bold })),
+        ...t.rows.map((r) => ({ cols: [r.label, r.text ?? r.values.map((v) => inr(v)).join('   ')], size: 9, bold: !!r.bold })),
     ];
     sendPdf(res, `${KINDS[kind].file}-${c.claimNo}.pdf`, [
         { text: `IBIMA ASSIST - ${KINDS[kind].title}`, size: 14, bold: true, align: 'center' },
         { text: `${c.claimNo} · ${c.insuredName ?? ''} · ${c.vehicleNo ?? ''}`, size: 9, align: 'center', gap: 2 },
         { rule: true, gap: 8 },
         { text: 'Parts assessment', bold: true, size: 11 },
-        ...s.parts.map((p) => ({ cols: [`${p.srNo}. ${p.part} (${p.material}, ${p.action}, ${p.allowed}, dep ${p.depreciationPct}%)`, `Rs. ${inr(p.partPrice)}`], size: 9 })),
-        { text: 'Parts computation', bold: true, size: 11, gap: 8 }, ...table(s.tables.parts),
-        { text: 'Labour computation', bold: true, size: 11, gap: 8 }, ...table(s.tables.labour),
-        { text: 'Additional charges & deductions', bold: true, size: 11, gap: 8 }, ...table(s.tables.charges),
-        { text: 'Final assessment', bold: true, size: 11, gap: 8 }, ...table(s.tables.final),
+        ...s.parts.map((p) => ({ cols: [`${p.srNo}. ${p.part} (${p.material}, ${p.action}, ${p.allowed}, dep ${p.depreciationPct}%${p.imt23 ? ', IMT 23' : ''})`, `Rs. ${inr(p.partPrice)}`], size: 9 })),
+        { cols: ['Total Parts Allowed Amount', `Rs. ${inr(s.totals.partsPriceAllowed)}`], size: 9, bold: true },
+        { text: s.tables.parts.title, bold: true, size: 11, gap: 8 }, ...table(s.tables.parts),
+        { text: s.tables.labour.title, bold: true, size: 11, gap: 8 }, ...table(s.tables.labour),
+        { text: '3. Remarks', bold: true, size: 11, gap: 8 }, { text: s.remarks || '--', size: 9 },
+        { text: s.tables.final.title, bold: true, size: 11, gap: 8 }, ...table(s.tables.final),
         { text: `Status: ${s.status}${s.submittedAt ? ` (${fmtDateTime(s.submittedAt)} by ${s.submittedBy})` : ''}`, size: 9, gap: 10 },
     ]);
 }
@@ -183,7 +194,7 @@ router.post(`${KIND_PATH}/submit`, canKind('edit'), asyncHandler(async (req, res
     const row = openClaim(req);
     const doc = editableLiability(row, kind);
     if (!(doc.parts ?? []).some((p) => p.allowed === 'Allowed')) throw badRequest('At least one part must be Allowed.');
-    const { totals } = computeLiability(doc);
+    const { totals } = computeLiability(doc, row);
     const actor = actorOf(req);
     transaction(() => {
         putDoc(row.id, kind, { ...doc, status: 'Submitted', submittedAt: nowIso(), submittedBy: actor.name, totals }, actor);
@@ -212,9 +223,9 @@ async function approverInfo(row) {
 
 function financials(row) {
     const items = damageItems(row.id);
-    const handler = computeLiability(liabilityDoc(row.id, 'liability')).totals;
+    const handler = computeLiability(liabilityDoc(row.id, 'liability'), row).totals;
     const flaDoc = liabilityDoc(row.id, 'fla');
-    const fla = computeLiability(flaDoc).totals;
+    const fla = computeLiability(flaDoc, row).totals;
     const flaDone = flaDoc.status === 'Submitted';
     return {
         aiIla: aiEstimate(items),
