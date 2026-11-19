@@ -551,25 +551,30 @@ function clockTime(v) {
 }
 
 /** First fill of Claim Details: what the intimation already captured. */
-function detailsFromIntimation(i) {
+function detailsFromIntimation(i, row = {}) {
     const year = yearOf(i.manufacturingYear);
     return compact({
-        vehicleRegNo: i.registrationNumber, make: i.make, model: i.model, variant: i.variant, fuelType: i.fuelType,
-        engineNumber: i.engineNo, chassisNumber: i.chassisNumber, colour: i.colour,
-        yearOfManufacture: year ? String(year) : undefined,
-        vehicleAge: year ? `${new Date().getFullYear() - year} Years` : undefined,
-        driverName: i.driverName, driverLicenseNumber: i.drivingLicenseNumber,
-        driverInjuryState: yesNo(i.driverInjured) === 'Yes' ? 'Minor' : undefined,
-        causeOfAccident: i.natureOfLoss, lossDescription: i.briefDescription,
-        rcOwnerName: i.insuredName, vahanEngineNumber: i.engineNo, vahanChassisNumber: i.chassisNumber,
-        dlHolderName: i.driverName,
+        // 1. Claim Information
+        claimNumber: row.claim_no, dateOfIncident: i.dateOfIncident,
+        placeOfIncident: [i.incidentArea, i.incidentCity, i.incidentState].filter(Boolean).join(', ') || undefined,
+        driverName: i.driverName, thirdPartyInvolved: yesNo(i.thirdPartyInvolved), dateOfIntimationCms: row.submitted_at,
+        policeStationName: i.policeStation, typeOfLoss: 'Own Damage', descriptionOfCause: i.briefDescription,
+        firLodged: yesNo(i.policeReport), firNumber: i.firNo, perilOperative: i.natureOfLoss,
+        // 2. Loss Details
+        policyNumber: row.policy_no ?? i.policyNumber, policyStartDate: i.policyStartDate, policyExpiryDate: i.policyEndDate,
+        insuredName: i.insuredName, insuredMobileNumber: i.insuredContact, insuredEmailAddress: i.insuredEmail,
+        // 3. Vehicle Details
+        registrationNumber: row.vehicle_no ?? i.registrationNumber, registrationDate: i.registrationDate, make: i.make, model: i.model,
+        variant: i.variant, manufacturingYear: year ? String(year) : undefined, chassisNumber: i.chassisNumber, engineNumber: i.engineNo,
+        vehicleColour: i.colour, typeOfFuel: i.fuelType, registerOwnerName: i.insuredName,
     });
 }
 
 router.get('/claims/:id/details', can(MODULES.details), (req, res) => {
     const row = loadClaim(req);
     const saved = getDoc(row.id, 'details');
-    const values = saved?.values ?? detailsFromIntimation(parseJson(row.intimation, {}));
+    // Saved values win; fields never saved are prefilled from the intimation.
+    const values = { ...detailsFromIntimation(parseJson(row.intimation, {}), row), ...(saved?.values ?? {}) };
     res.json({ values, savedAt: saved?.updatedAt ?? null, savedBy: saved?.updatedBy ?? null });
 });
 

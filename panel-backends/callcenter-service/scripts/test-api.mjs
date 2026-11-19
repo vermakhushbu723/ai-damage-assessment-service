@@ -315,7 +315,7 @@ try {
 
     // ---------- claim details ----------
     r = await H.get(`/claims/${claimId}/details`);
-    check('claim details prefilled from the intimation', r.data.values.vehicleRegNo === 'DL 01 AB 1234' && r.data.values.yearOfManufacture === '2021' && r.data.values.rcOwnerName === 'Amit Verma', r.data);
+    check('claim details (Figma fields) prefilled from the intimation', r.data.values.registrationNumber === 'DL 01 AB 1234' && r.data.values.manufacturingYear === '2021' && r.data.values.registerOwnerName === 'Amit Verma' && r.data.values.claimNumber === claimNo && r.data.values.placeOfIncident.includes('Noida'), r.data);
     check('agent cannot open claim details -> 403', (await AG2.get(`/claims/${claimId}/details`)).status === 403);
     check('bad driver contact -> 400', (await H.put(`/claims/${claimId}/details`, { values: { driverContact: '123' } })).status === 400);
     r = await H.put(`/claims/${claimId}/details`, { values: { ...r.data.values, odometer: '45000', bodyType: 'hatchback', driverName: 'Amit Kumar', driverContact: '+91 98765 43210', partsDamage: ['Front Bumper', 'Bonnet'], primaryDriver: 'Yes' } });
@@ -408,7 +408,7 @@ try {
         const ok = (row) => Math.abs(row.values[0] - row.values[1] - row.values[2] - row.values[3]) < 0.02;
         check('Figma layout: every summary row Gross - Depn - IMT 23 = Net', ['parts', 'labour'].every((t) => r.data.tables[t].columns.length === 5 && r.data.tables[t].rows.every(ok)));
         check('paint material depreciated 50%, paint labour not', rows('labour')['paint-material'].values[1] === rows('labour')['paint-material'].values[0] / 2 && rows('labour')['paint-labour'].values[1] === 0);
-        check('final payable = last row of the Final Settlement Summary', r.data.tables.final.rows.at(-1).key === 'net' && r.data.tables.final.rows.at(-1).values[0] === r.data.totals.netLiability);
+        check('Final Payable Amount row (then Optional Coverage, as in Figma)', r.data.tables.final.rows.find((x) => x.key === 'net').values[0] === r.data.totals.netLiability && r.data.tables.final.rows.at(-1).key === 'optionalCoverage');
     }
     {
         const before = r.data.totals.netLiability;
@@ -425,7 +425,7 @@ try {
         r = x;
     }
     r = await H.patch(`/claims/${claimId}/liability/parts/${r.data.parts.at(-1).id}`, { allowed: 'Disallowed', remarks: 'Pre-existing' });
-    check('disallow a part (not counted)', r.data.parts.at(-1).allowed === 'Disallowed' && r.data.tables.final.rows.at(-1).values[0] === r.data.totals.netLiability);
+    check('disallow a part (not counted)', r.data.parts.at(-1).allowed === 'Disallowed' && r.data.tables.final.rows.find((x) => x.key === 'net').values[0] === r.data.totals.netLiability);
     check('compulsory excess deducted', r.data.charges.compulsoryExcess === -1000);
     raw = await H.raw('POST', `/claims/${claimId}/liability/report`);
     check('Generate Report -> PDF', raw.status === 200 && raw.buf.subarray(0, 5).toString() === '%PDF-');

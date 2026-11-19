@@ -231,6 +231,7 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
                     { key: 'other', label: 'Miscellaneous Deductions', values: [charges.other], editable: true, deduction: true },
                     { key: 'extraDeduction', label: 'Extra Deduction', values: [charges.extraDeduction], editable: true, deduction: true },
                     { key: 'net', label: 'Final Payable Amount', values: [r0(finalPayable)], bold: true },
+                    { key: 'optionalCoverage', label: 'Optional Coverage', values: [amt('optionalCoverage')], editable: true, info: true },
                 ],
             },
         },

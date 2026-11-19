@@ -140,7 +140,7 @@ router.put(`${KIND_PATH}/charges`, canKind('edit'), (req, res) => {
     const row = openClaim(req);
     const doc = editableLiability(row, kind);
     const charges = { ...(doc.charges ?? {}) };
-    for (const k of ['towing', 'onSiteRepair', 'policyBenefits', 'additionalBenefits', 'depreciationRefund', 'voluntaryExcess', 'salvage', 'other', 'extraDeduction', 'compulsoryExcess']) {
+    for (const k of ['towing', 'onSiteRepair', 'policyBenefits', 'additionalBenefits', 'depreciationRefund', 'voluntaryExcess', 'salvage', 'other', 'extraDeduction', 'compulsoryExcess', 'optionalCoverage']) {
         if (!(k in (req.body ?? {}))) continue;
         const n = Number(req.body[k]);
         if (!Number.isFinite(n) || n < 0) throw badRequest(`${k} must be a positive amount.`);
