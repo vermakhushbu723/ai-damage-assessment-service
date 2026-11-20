@@ -137,7 +137,7 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
     // ---- 1. Component Cost Summary ----
     const GROUPS = [
         { key: 'metal', label: `Metal Parts ${Math.round(metalRate * 100)}% Depreciation`, has: (m) => m === 'Metal', always: true },
-        { key: 'plastic', label: 'Plastic / Rubber Parts 50% Depreciation', has: (m) => m === 'Plastic' || m === 'Rubber', always: true },
+        { key: 'plastic', label: 'Plastic Parts 50% Depreciation', has: (m) => m === 'Plastic' || m === 'Rubber', always: true },
         { key: 'fibre', label: 'Fibre Glass Parts 30% Depreciation', has: (m) => m === 'Fibre Glass' },
         { key: 'glass', label: 'Parts - Glass Nil Depreciation', has: (m) => m === 'Glass', always: true },
     ];
@@ -190,7 +190,7 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
     const finalPayable = Math.max(0, totalAssessed + deductions);
 
     const row4 = (key, label, v, bold = false) => ({ key, label, values: [r2(v.gross), r2(v.depn), r2(v.imt), r2(v.net)], ...(bold ? { bold: true } : {}) });
-    const COLS = ['Gross Amount', 'Depn', 'IMT 23', 'Net Amount'];
+    const COLS = ['Gross Ammount', 'Depn', 'IMT 23', 'Net Ammount'];
     return {
         parts: parts.map(({ _rate, ...p }) => p),
         ageMonths,
@@ -214,7 +214,7 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
                 columns: ['Parts Computation', ...COLS],
                 rows: [
                     ...groupLines.map((g) => row4(g.key, g.label, g)),
-                    row4('tax', `Tax on Parts Allowed (GST ${Math.round(PARTS_GST * 100)}%)`, partsTax),
+                    row4('tax', 'Tax on Parts Allowed', partsTax),
                     row4('total', 'Total on Parts Allowed', partsTotal, true),
                 ],
             },
@@ -225,27 +225,28 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
                     row4('ofd', 'Labour O/F/D', labourOfd),
                     row4('paint-labour', 'Paint Labour', paintLabour),
                     row4('paint-material', 'Paint Material', paintMaterial),
-                    row4('tax', `Tax on Labour Allowed (GST ${Math.round(LABOUR_GST * 100)}%)`, labourTax),
+                    row4('tax', 'Tax on Labour Allowed', labourTax),
                     row4('total', 'Total on Labour Allowed', labourTotal, true),
                 ],
             },
             final: {
                 title: '4. Final Settlement Summary',
-                columns: ['Settlement Computation', 'Net Amount'],
+                columns: ['Settlement Computation', 'Net Ammount'],
                 rows: [
                     { key: 'category', label: 'Settlement Category', text: 'Partial Loss' },
-                    { key: 'partial', label: 'Partial Damage (Parts + Labour)', values: [r2(partialDamage)] },
+                    // Row order as in Figma (Final Settlement Summary)
+                    { key: 'partial', label: 'Partial Damage', values: [r2(partialDamage)] },
+                    { key: 'assessed', label: 'Total Assessed Claim', values: [r2(totalAssessed)] },
                     { key: 'depreciationRefund', label: 'Depreciation Refund', values: [charges.depreciationRefund], editable: true },
                     { key: 'additionalBenefits', label: 'Additional Benefits', values: [charges.additionalBenefits], editable: true },
                     { key: 'policyBenefits', label: 'Policy Benefits', values: [charges.policyBenefits], editable: true },
                     { key: 'towing', label: 'Towing Charges', values: [charges.towing], editable: true },
                     { key: 'onSiteRepair', label: 'On-Site Repair Cost', values: [charges.onSiteRepair], editable: true },
-                    { key: 'assessed', label: 'Total Assessed Claim', values: [r2(totalAssessed)], bold: true },
                     { key: 'compulsoryExcess', label: 'Mandatory Deductible', values: [charges.compulsoryExcess], editable: true, deduction: true },
+                    { key: 'extraDeduction', label: 'Extra Deduction', values: [charges.extraDeduction], editable: true, deduction: true },
                     { key: 'voluntaryExcess', label: 'Voluntary Deductible', values: [charges.voluntaryExcess], editable: true, deduction: true },
                     { key: 'salvage', label: 'Recoverable Salvage Amount', values: [charges.salvage], editable: true, deduction: true },
                     { key: 'other', label: 'Miscellaneous Deductions', values: [charges.other], editable: true, deduction: true },
-                    { key: 'extraDeduction', label: 'Extra Deduction', values: [charges.extraDeduction], editable: true, deduction: true },
                     { key: 'net', label: 'Final Payable Amount', values: [r0(finalPayable)], bold: true },
                     { key: 'optionalCoverage', label: 'Optional Coverage', values: [amt('optionalCoverage')], editable: true, info: true },
                 ],
