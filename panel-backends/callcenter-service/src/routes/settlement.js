@@ -99,6 +99,13 @@ function checkPart(p, partial = false) {
         out.hsnCode = String(p.hsnCode);
     }
     if (!partial || 'imt23' in p) out.imt23 = p.imt23 === true || p.imt23 === 'Yes';
+    for (const k of ['removeRefit', 'repairLabour', 'paintLabour']) {
+        if (!(k in p)) continue;
+        if (p[k] === null || p[k] === '') { out[k] = null; continue; } // back to the standard rate
+        const n = Number(p[k]);
+        if (!Number.isFinite(n) || n < 0 || n > 10_000_000) throw badRequest('Labour must be a positive amount.');
+        out[k] = Math.round(n);
+    }
     return out;
 }
 
@@ -118,7 +125,20 @@ router.post(`${KIND_PATH}/parts`, canKind('edit'), (req, res) => {
     res.status(201).json(liabilityState(row, kind));
 });
 
-/** PATCH /api/v1/claims/:id/(liability|fla)/parts/:partId -- edit a row (material, action, allowed, remarks, price). */
+/** DELETE /api/v1/claims/:id/(liability|fla)/parts/:partId -- Action > delete a row. */
+router.delete(`${KIND_PATH}/parts/:partId`, canKind('edit'), (req, res) => {
+    const { kind } = req.params;
+    const row = openClaim(req);
+    const doc = editableLiability(row, kind);
+    const part = (doc.parts ?? []).find((p) => p.id === req.params.partId);
+    if (!part) throw notFound('Part');
+    doc.parts = doc.parts.filter((p) => p.id !== part.id);
+    putDoc(row.id, kind, { ...doc, status: 'Draft' }, actorOf(req));
+    audit(row.id, `${KINDS[kind].label} part removed`, part.part, actorOf(req));
+    res.json(liabilityState(row, kind));
+});
+
+/** PATCH /api/v1/claims/:id/(liability|fla)/parts/:partId -- edit a row (material, action, allowed, remarks, price, labour, IMT 23). */
 router.patch(`${KIND_PATH}/parts/:partId`, canKind('edit'), (req, res) => {
     const { kind } = req.params;
     const row = openClaim(req);
@@ -163,8 +183,8 @@ function liabilityPdf(res, row, kind) {
         { text: `${c.claimNo} · ${c.insuredName ?? ''} · ${c.vehicleNo ?? ''}`, size: 9, align: 'center', gap: 2 },
         { rule: true, gap: 8 },
         { text: 'Parts assessment', bold: true, size: 11 },
-        ...s.parts.map((p) => ({ cols: [`${p.srNo}. ${p.part} (${p.material}, ${p.action}, ${p.allowed}, dep ${p.depreciationPct}%${p.imt23 ? ', IMT 23' : ''})`, `Rs. ${inr(p.partPrice)}`], size: 9 })),
-        { cols: ['Total Parts Allowed Amount', `Rs. ${inr(s.totals.partsPriceAllowed)}`], size: 9, bold: true },
+        ...s.parts.map((p) => ({ cols: [`${p.srNo}. ${p.part} (${p.material}, ${p.action}, ${p.allowed}, dep ${p.depreciationPct}%${p.imt23 ? ', IMT 23' : ''}) price ${inr(p.partPrice)} net ${inr(p.netAmount)} GST ${inr(p.gstAmount)} labour ${inr(p.removeRefit + p.repairLabour + p.paintLabour)}`, `Rs. ${inr(p.totalAllowed)}`], size: 9 })),
+        { cols: ['Total Parts Allowed Amount', `Rs. ${inr(s.totals.totalAllowed)}`], size: 9, bold: true },
         { text: s.tables.parts.title, bold: true, size: 11, gap: 8 }, ...table(s.tables.parts),
         { text: s.tables.labour.title, bold: true, size: 11, gap: 8 }, ...table(s.tables.labour),
         { text: '3. Remarks', bold: true, size: 11, gap: 8 }, { text: s.remarks || '--', size: 9 },

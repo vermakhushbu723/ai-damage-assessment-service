@@ -427,7 +427,19 @@ try {
         check('Final Settlement: towing added, voluntary deductible deducted, remarks saved', x.status === 200 && x.data.totals.netLiability === before + 1000 && x.data.remarks === 'Cashless claim payment to workshop', x.data?.totals);
         x = await H.put(`/claims/${claimId}/liability/charges`, { towing: 0, voluntaryExcess: 0 });
         check('charges back to 0', x.data.totals.netLiability === before);
-        r = x;
+        // Figma parts columns: per part amounts, labour editable, Action > delete
+        const one = x.data.parts.find((y) => y.allowed === 'Allowed');
+        check('part row: Dep / Net / GST / labour / Total Allowed', one.depAmount >= 0 && Math.abs(one.partPrice - one.depAmount - one.netAmount) < 0.02 && one.gstPct === 28
+            && Math.abs(one.totalAllowed - (one.netAmount + one.gstAmount + one.removeRefit + one.repairLabour + one.paintLabour)) < 0.02, one);
+        const ofdBefore = x.data.tables.labour.rows.find((y) => y.key === 'ofd').values[0];
+        x = await H.patch(`/claims/${claimId}/liability/parts/${one.id}`, { removeRefit: one.removeRefit + 500 });
+        check('per-part labour edit flows into Labour O/F/D', x.status === 200 && x.data.tables.labour.rows.find((y) => y.key === 'ofd').values[0] === ofdBefore + 500);
+        x = await H.patch(`/claims/${claimId}/liability/parts/${one.id}`, { removeRefit: null });
+        check('labour back to the standard rate', x.data.tables.labour.rows.find((y) => y.key === 'ofd').values[0] === ofdBefore);
+        const added = await H.post(`/claims/${claimId}/liability/parts`, { part: 'Temp Part', material: 'Metal', action: 'Repair', allowed: 'Allowed' });
+        const del = await H.del(`/claims/${claimId}/liability/parts/${added.data.parts.at(-1).id}`);
+        check('Action > delete a part', del.status === 200 && !del.data.parts.some((y) => y.part === 'Temp Part') && del.data.totals.netLiability === before, del.data?.totals);
+        r = del;
     }
     r = await H.patch(`/claims/${claimId}/liability/parts/${r.data.parts.at(-1).id}`, { allowed: 'Disallowed', remarks: 'Pre-existing' });
     check('disallow a part (not counted)', r.data.parts.at(-1).allowed === 'Disallowed' && r.data.tables.final.rows.find((x) => x.key === 'net').values[0] === r.data.totals.netLiability);

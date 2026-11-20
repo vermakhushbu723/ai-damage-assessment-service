@@ -113,7 +113,23 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
     const parts = (doc.parts ?? []).map((p, i) => {
         const material = materialOf(p.material);
         const rate = p.action === 'Replace' ? (material === 'Metal' ? metalRate : DEPRECIATION[material] ?? 0.5) : 0;
-        return { ...p, material, imt23: !!p.imt23, srNo: String(i + 1).padStart(2, '0'), depreciationPct: Math.round(rate * 100), _rate: rate };
+        const price = p.partPrice || 0;
+        // Labour of this part: what the handler entered, else the standard rate.
+        const lab = (v, dflt) => (v === undefined || v === null || v === '' ? dflt : Math.max(0, Number(v) || 0));
+        const removeRefit = lab(p.removeRefit, p.action === 'Replace' ? LABOUR_RATES.removeRefit : 0);
+        const repairLabour = lab(p.repairLabour, p.action === 'Repair' ? LABOUR_RATES.repair : 0);
+        const paintLabour = lab(p.paintLabour, material !== 'Glass' && material !== 'Rubber' ? LABOUR_RATES.paint : 0);
+        const depAmount = price * rate;
+        const imtAmount = p.imt23 ? (price - depAmount) * IMT23_DEDUCTION : 0;
+        const netAmount = price - depAmount - imtAmount;
+        const gstAmount = netAmount * PARTS_GST;
+        const allowedRow = p.allowed === 'Allowed';
+        return {
+            ...p, material, imt23: !!p.imt23, srNo: String(i + 1).padStart(2, '0'), depreciationPct: Math.round(rate * 100), _rate: rate,
+            removeRefit, repairLabour, paintLabour,
+            depAmount: r2(depAmount), netAmount: r2(netAmount), gstPct: Math.round(PARTS_GST * 100), gstAmount: r2(gstAmount),
+            totalAllowed: allowedRow ? r2(netAmount + gstAmount + removeRefit + repairLabour + paintLabour) : 0,
+        };
     });
     const allowed = parts.filter((p) => p.allowed === 'Allowed');
     const sum = (a) => a.reduce((s, v) => s + v, 0);
@@ -137,18 +153,16 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
     const partsTotal = { gross: partsBase.gross + partsTax.gross, depn: partsBase.depn + partsTax.depn, imt: partsBase.imt + partsTax.imt, net: partsBase.net + partsTax.net };
 
     // ---- 2. Labour Cost Summary ----
-    const replaced = allowed.filter((p) => p.action === 'Replace');
-    const repaired = allowed.filter((p) => p.action === 'Repair');
-    const painted = allowed.filter((p) => p.material !== 'Glass' && p.material !== 'Rubber');
-    const labourOfd = { gross: replaced.length * LABOUR_RATES.removeRefit + repaired.length * LABOUR_RATES.repair, depn: 0, imt: 0 };
+    // Labour O/F/D = remove & refit + repair labour of every allowed part; paint is split labour / material.
+    const labourOfd = { gross: sum(allowed.map((p) => p.removeRefit + p.repairLabour)), depn: 0, imt: 0 };
     labourOfd.net = labourOfd.gross;
-    const paintShare = (list, share) => sum(list.map(() => LABOUR_RATES.paint * share));
-    const paintLabour = { gross: paintShare(painted, 1 - PAINT_MATERIAL_SHARE), depn: 0 };
-    paintLabour.imt = paintShare(painted.filter((p) => p.imt23), 1 - PAINT_MATERIAL_SHARE) * IMT23_DEDUCTION;
+    const paintShare = (list, share) => sum(list.map((p) => p.paintLabour * share));
+    const paintLabour = { gross: paintShare(allowed, 1 - PAINT_MATERIAL_SHARE), depn: 0 };
+    paintLabour.imt = paintShare(allowed.filter((p) => p.imt23), 1 - PAINT_MATERIAL_SHARE) * IMT23_DEDUCTION;
     paintLabour.net = paintLabour.gross - paintLabour.imt;
-    const paintMaterial = { gross: paintShare(painted, PAINT_MATERIAL_SHARE) };
+    const paintMaterial = { gross: paintShare(allowed, PAINT_MATERIAL_SHARE) };
     paintMaterial.depn = paintMaterial.gross * PAINT_MATERIAL_DEPRECIATION;
-    paintMaterial.imt = paintShare(painted.filter((p) => p.imt23), PAINT_MATERIAL_SHARE) * (1 - PAINT_MATERIAL_DEPRECIATION) * IMT23_DEDUCTION;
+    paintMaterial.imt = paintShare(allowed.filter((p) => p.imt23), PAINT_MATERIAL_SHARE) * (1 - PAINT_MATERIAL_DEPRECIATION) * IMT23_DEDUCTION;
     paintMaterial.net = paintMaterial.gross - paintMaterial.depn - paintMaterial.imt;
     const labourBase = ['gross', 'depn', 'imt', 'net'].reduce((o, k) => ({ ...o, [k]: labourOfd[k] + paintLabour[k] + paintMaterial[k] }), {});
     const labourTax = ['gross', 'depn', 'imt', 'net'].reduce((o, k) => ({ ...o, [k]: labourBase[k] * LABOUR_GST }), {});
@@ -184,6 +198,8 @@ export function computeLiability(doc, { ageMonths = null } = {}) {
         remarks: doc.summaryRemarks ?? '',
         totals: {
             partsPriceAllowed: r0(partsBase.gross),
+            // Figma "Total Parts Allowed Amount" = sum of the Total Allowed column
+            totalAllowed: r0(sum(parts.map((p) => p.totalAllowed))),
             partsAllowed: r0(partsTotal.net),
             labourAllowed: r0(labourTotal.net),
             additional: r0(additions),
